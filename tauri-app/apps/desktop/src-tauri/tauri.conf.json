@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Adobe AI Bridge",
+  "version": "0.1.0",
+  "identifier": "org.adobe-ai-bridge.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Adobe AI Bridge",
+        "width": 1024,
+        "height": 800,
+        "minWidth": 780,
+        "minHeight": 640,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg"],
+    "icon": ["icons/icon.icns", "icons/icon.png"],
+    "resources": {
+      "../../../runtime/bundles/bridges/illustrator/": "bridges/illustrator/",
+      "../../../runtime/bundles/bridges/indesign/": "bridges/indesign/",
+      "../../../runtime/bundles/shared/node/": "shared/node/",
+      "../../../runtime/bundles/bridge-tools/": "bridge-tools/"
+    },
+    "category": "public.app-category.utilities",
+    "shortDescription": "Manage Adobe Illustrator and InDesign AI bridges",
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    }
+  }
+}

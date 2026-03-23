@@ -1,0 +1,206 @@
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+import { executeToolJsx } from '../tool-executor.js';
+import { coordinateSystemSchema } from '../session.js';
+import { READ_ANNOTATIONS } from '../modify/shared.js';
+/**
+ * find_objects — 条件によるオブジェクト検索
+ * @see https://ai-scripting.docsforadobe.dev/jsobjref/PageItem/ — typename, name, geometricBounds
+ */
+const jsxCode = `
+var preflight = preflightChecks();
+if (preflight) {
+  writeResultFile(RESULT_PATH, preflight);
+} else {
+  try {
+    var params = readParamsFile(PARAMS_PATH);
+    var coordSystem = params.coordinate_system || "artboard-web";
+    var doc = app.activeDocument;
+    var results = [];
+
+    function colorsMatch(actual, expected) {
+      var tol = (expected.tolerance !== undefined) ? expected.tolerance : 5;
+      if (expected.type === "cmyk") {
+        try {
+          if (actual.typename !== "CMYKColor") { return false; }
+          if (Math.abs(actual.cyan - expected.c) > tol) { return false; }
+          if (Math.abs(actual.magenta - expected.m) > tol) { return false; }
+          if (Math.abs(actual.yellow - expected.y) > tol) { return false; }
+          if (Math.abs(actual.black - expected.k) > tol) { return false; }
+          return true;
+        } catch (e) { return false; }
+      } else if (expected.type === "rgb") {
+        try {
+          if (actual.typename !== "RGBColor") { return false; }
+          if (Math.abs(actual.red - expected.r) > tol) { return false; }
+          if (Math.abs(actual.green - expected.g) > tol) { return false; }
+          if (Math.abs(actual.blue - expected.b) > tol) { return false; }
+          return true;
+        } catch (e) { return false; }
+      }
+      return false;
+    }
+
+    // 複合パス自身は塗りを持たないため内部パスの色で判定し、複合パスを 1 件として返す
+    function pathPaintMatches(item, kind, expected) {
+      if (item.typename !== "PathItem" && item.typename !== "CompoundPathItem") { return false; }
+      try {
+        var leaves = collectPaintLeaves(item);
+        for (var li = 0; li < leaves.length; li++) {
+          var leaf = leaves[li];
+          if (kind === "fill" && leaf.filled && colorsMatch(leaf.fillColor, expected)) { return true; }
+          if (kind === "stroke" && leaf.stroked && colorsMatch(leaf.strokeColor, expected)) { return true; }
+        }
+      } catch (e) {}
+      return false;
+    }
+
+    function matchesFilters(item) {
+      // name filter
+      if (params.name) {
+        var itemName = "";
+        try { itemName = item.name || ""; } catch (e) {}
+        if (itemName.indexOf(params.name) < 0) { return false; }
+      }
+
+      // type filter
+      var itemType = getItemType(item);
+      if (params.type) {
+        if (itemType !== params.type) { return false; }
+      }
+
+      // layer_name filter
+      if (params.layer_name) {
+        var layerName = getParentLayerName(item);
+        if (layerName !== params.layer_name) { return false; }
+      }
+
+      // artboard_index filter
+      if (params.artboard_index !== undefined) {
+        var abIdx = getArtboardIndexForItem(item);
+        if (abIdx !== params.artboard_index) { return false; }
+      }
+
+      if (params.fill_color && !pathPaintMatches(item, "fill", params.fill_color)) { return false; }
+      if (params.stroke_color && !pathPaintMatches(item, "stroke", params.stroke_color)) { return false; }
+
+      // font_name filter
+      if (params.font_name) {
+        if (item.typename !== "TextFrame") { return false; }
+        try {
+          var fontFound = false;
+          for (var t = 0; t < item.textRanges.length; t++) {
+            var tf = item.textRanges[t].characterAttributes.textFont;
+            var familyName = tf.family || "";
+            var fontName = tf.name || "";
+            if (familyName.indexOf(params.font_name) >= 0 || fontName.indexOf(params.font_name) >= 0) {
+              fontFound = true;
+              break;
+            }
+          }
+          if (!fontFound) { return false; }
+        } catch (e) { return false; }
+      }
+
+      // font_size filter
+      if (params.font_size) {
+        if (item.typename !== "TextFrame") { return false; }
+        try {
+          var size = item.textRanges[0].characterAttributes.size;
+          if (params.font_size.min !== undefined && size < params.font_size.min) { return false; }
+          if (params.font_size.max !== undefined && size > params.font_size.max) { return false; }
+        } catch (e) { return false; }
+      }
+
+      return true;
+    }
+
+    function collectItems(container) {
+      for (var i = 0; i < container.pageItems.length; i++) {
+        var item = container.pageItems[i];
+        if (matchesFilters(item)) {
+          var abRect = getArtboardRectByIndex(getArtboardIndexForItem(item));
+          var info = {
+            uuid: ensureUUID(item),
+            zIndex: getZIndex(item),
+            name: "",
+            type: getItemType(item),
+            bounds: getBounds(item, coordSystem, abRect),
+            layerName: getParentLayerName(item)
+          };
+          try { info.name = item.name || ""; } catch (e) {}
+          results.push(info);
+        }
+        // Recurse into groups
+        if (item.typename === "GroupItem") {
+          try { collectItems(item); } catch (e) {}
+        }
+      }
+      // サブレイヤー（Layer.layers）は pageItems に含まれないので明示的に辿る
+      var subLayers = null;
+      try { subLayers = container.layers; } catch (e) {}
+      if (subLayers) {
+        for (var sl = 0; sl < subLayers.length; sl++) collectItems(subLayers[sl]);
+      }
+    }
+
+    for (var i = 0; i < doc.layers.length; i++) {
+      collectItems(doc.layers[i]);
+    }
+
+    writeResultFile(RESULT_PATH, {
+      coordinateSystem: coordSystem,
+      count: results.length,
+      objects: results
+    });
+  } catch (e) {
+    writeResultFile(RESULT_PATH, { error: true, message: "find_objects: " + e.message, line: e.line });
+  }
+}
+`;
+
+const colorSchema = z.object({
+  type: z.enum(['cmyk', 'rgb']),
+  c: z.number().optional(),
+  m: z.number().optional(),
+  y: z.number().optional(),
+  k: z.number().optional(),
+  r: z.number().optional(),
+  g: z.number().optional(),
+  b: z.number().optional(),
+  tolerance: z.number().optional(),
+}).optional();
+
+export function register(server: McpServer): void {
+  server.registerTool(
+    'find_objects',
+    {
+      title: 'Find Objects',
+      description: 'Search for objects by specified criteria',
+      inputSchema: {
+        name: z.string().optional().describe('Object name (partial match)'),
+        type: z
+          .enum(['text', 'path', 'image', 'group', 'compound-path', 'symbol'])
+          .optional()
+          .describe('Object type'),
+        layer_name: z.string().optional().describe('Layer name'),
+        fill_color: colorSchema.describe('Search paths and compound paths (matched by their inner paths) by fill color. Tolerance defaults to 5 per channel (0-255 for RGB, 0-100 for CMYK). Set tolerance: 0 for exact match.'),
+        stroke_color: colorSchema.describe('Search paths and compound paths (matched by their inner paths) by stroke color. Tolerance defaults to 5 per channel (0-255 for RGB, 0-100 for CMYK). Set tolerance: 0 for exact match.'),
+        font_name: z.string().optional().describe('Font name (partial match)'),
+        font_size: z
+          .object({
+            min: z.number().optional(),
+            max: z.number().optional(),
+          })
+          .optional()
+          .describe('Font size range'),
+        artboard_index: z.number().int().min(0).optional().describe('Artboard index (0-based integer)'),
+        coordinate_system: coordinateSystemSchema,
+      },
+      annotations: READ_ANNOTATIONS,
+    },
+    async (params) => {
+      return executeToolJsx(jsxCode, params, { resolveCoordinate: true });
+    },
+  );
+}

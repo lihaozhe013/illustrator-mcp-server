@@ -1,0 +1,20 @@
+# Build caches and generated application artifacts.
+/illustrator-mcp/node_modules/
+/illustrator-mcp/dist/
+/tauri-app/node_modules/
+/tauri-app/target/
+/tauri-app/.turbo/
+/tauri-app/.vite/
+/tauri-app/.pytest_cache/
+/tauri-app/runtime/.cache/
+/tauri-app/runtime/build/
+/tauri-app/runtime/dist/
+/tauri-app/runtime/.venv/
+/tauri-app/apps/desktop/dist/
+/tauri-app/apps/desktop/src-tauri/target/
+**/__pycache__/
+*.pyc
+*.tsbuildinfo
+.DS_Store
+.env
+.env.*

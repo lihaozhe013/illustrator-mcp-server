@@ -1,0 +1,33 @@
+{
+  "name": "adobe-ai-bridge",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@12.9.1",
+  "engines": { "node": "^22.12.0 || ^24.0.0 || >=26.0.0" },
+  "scripts": {
+    "dev": "pnpm --dir apps/desktop dev",
+    "build": "pnpm --dir apps/desktop build",
+    "lint": "biome check apps/desktop/src apps/desktop/vite.config.ts vitest.config.ts tests packages",
+    "format:check": "biome check apps/desktop/src apps/desktop/vite.config.ts vitest.config.ts tests packages",
+    "typecheck": "pnpm --dir apps/desktop typecheck",
+    "test": "vitest run",
+    "bundle:runtimes": "uv run --locked --project runtime python scripts/build_runtime_bundles.py",
+    "verify:dmg": "uv run --locked --project runtime python scripts/verify_dmg.py",
+    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && uv run --locked --project runtime pytest -c runtime/pyproject.toml tests && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace",
+    "tauri": "pnpm --dir apps/desktop tauri",
+    "build:dmg": "pnpm bundle:runtimes && pnpm --dir apps/desktop exec tauri build --bundles dmg && pnpm verify:dmg"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.1",
+    "@biomejs/biome": "2.5.15",
+    "@vitejs/plugin-react": "6.1.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "happy-dom": "20.14.5",
+    "jsonc-parser": "3.3.1",
+    "typescript": "7.0.2",
+    "vite": "8.3.3",
+    "vitest": "5.0.3"
+  }
+}

@@ -1,0 +1,16 @@
+[package]
+name = "adobe-ai-bridge-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+adobe-ai-bridge-core = { path = "../../../crates/bridge-core" }
+serde.workspace = true
+tauri.workspace = true
+
+[lints]
+workspace = true

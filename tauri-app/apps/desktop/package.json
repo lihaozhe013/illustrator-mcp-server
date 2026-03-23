@@ -1,0 +1,21 @@
+{
+  "name": "@adobe-ai-bridge/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "lint": "pnpm -w lint",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm -w test",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.12.1",
+    "@tauri-apps/plugin-dialog": "2.8.1",
+    "@adobe-ai-bridge/client-config": "workspace:*",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  }
+}

@@ -1,0 +1,113 @@
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+import { executeJsx } from '../../executor/jsx-runner.js';
+import { formatToolResult } from '../tool-executor.js';
+import { DESTRUCTIVE_ANNOTATIONS, coerceBoolean } from './shared.js';
+import { checkAbsoluteOutputPath, resolveOutputPath } from '../../utils/output-path.js';
+
+/**
+ * save_document — ドキュメントの上書き保存・別名保存
+ *
+ * @see https://ai-scripting.docsforadobe.dev/jsobjref/Document/ — Document.save(), Document.saveAs()
+ *
+ * JSX API:
+ *   Document.save() → void  (上書き保存)
+ *   Document.saveAs(saveIn: File [, options]) → void  (別名保存)
+ */
+const jsxCode = `
+var preflight = preflightChecks();
+if (preflight) {
+  writeResultFile(RESULT_PATH, preflight);
+} else {
+  try {
+    var params = readParamsFile(PARAMS_PATH);
+    var doc = app.activeDocument;
+    var mode = params.mode || "save";
+
+    if (mode === "save") {
+      doc.save();
+      writeResultFile(RESULT_PATH, { success: true, mode: "save" });
+    } else if (mode === "save_as") {
+      var savePath = params.path;
+      if (!savePath) {
+        var dir;
+        try {
+          var docPath = doc.path ? doc.path.fsName : '';
+          if (docPath && docPath !== '/') {
+            dir = docPath;
+          } else {
+            dir = Folder.desktop.fsName;
+          }
+        } catch (e) {
+          dir = Folder.desktop.fsName;
+        }
+        var baseName = doc.name.replace(/\\.[^.]+$/, '').replace(/ /g, '-');
+        var sep = Folder.fs === 'Windows' ? '\\\\' : '/';
+        savePath = dir + sep + baseName + '.ai';
+        var counter = 2;
+        while (new File(savePath).exists) {
+          savePath = dir + sep + baseName + '_' + counter + '.ai';
+          counter++;
+        }
+      }
+      var saveFile = new File(savePath);
+      // 明示パスの既存ファイルは overwrite: true のときだけ上書きする（無関係なファイルの破壊を防ぐ）
+      var existed = saveFile.exists;
+      if (existed && params.overwrite !== true) {
+        writeResultFile(RESULT_PATH, {
+          error: true,
+          fileExists: true,
+          path: savePath,
+          message: "File already exists: " + savePath + ". Nothing was saved. Pass overwrite: true to replace it, or choose another path."
+        });
+      } else {
+        doc.saveAs(saveFile);
+        writeResultFile(RESULT_PATH, { success: true, mode: "save_as", path: savePath, overwritten: existed });
+      }
+    } else {
+      writeResultFile(RESULT_PATH, { error: true, message: "Unknown mode: " + mode });
+    }
+  } catch (e) {
+    writeResultFile(RESULT_PATH, { error: true, message: "save_document failed: " + e.message, line: e.line });
+  }
+}
+`;
+
+export function register(server: McpServer): void {
+  server.registerTool(
+    'save_document',
+    {
+      title: 'Save Document',
+      description:
+        'Save the active Illustrator document. save_as refuses to replace an existing file unless overwrite is true. Note: Illustrator will be activated (brought to foreground) during execution.',
+      inputSchema: {
+        mode: z
+          .enum(['save', 'save_as'])
+          .optional()
+          .default('save')
+          .describe('save = overwrite, save_as = save to new path'),
+        path: z
+          .string()
+          .optional()
+          .describe('Absolute file path for save_as mode. If omitted, auto-generates a new non-conflicting name (<name>_2.ai, ...) in the same directory as the document (or ~/Desktop for unsaved documents)'),
+        overwrite: coerceBoolean
+          .optional()
+          .default(false)
+          .describe('save_as only: allow replacing an existing file at path (default: false = error if the file exists)'),
+      },
+      // save_as のパス省略時は毎回別名で新規ファイルを作るため冪等ではない。overwrite: true は既存ファイルを置き換えうる
+      annotations: DESTRUCTIVE_ANNOTATIONS,
+    },
+    async (params) => {
+      const resolvedParams = { ...params };
+      if (resolvedParams.mode === 'save_as' && resolvedParams.path !== undefined) {
+        const pathError = checkAbsoluteOutputPath(resolvedParams.path, 'path');
+        if (pathError) return formatToolResult({ error: true, message: pathError });
+        // シンボリックリンク経由のディレクトリ（macOS の /tmp 等）は実パスに解決してから渡す
+        resolvedParams.path = resolveOutputPath(resolvedParams.path);
+      }
+      const result = await executeJsx(jsxCode, resolvedParams, { activate: true });
+      return formatToolResult(result);
+    },
+  );
+}

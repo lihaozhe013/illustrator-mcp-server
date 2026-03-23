@@ -1,0 +1,49 @@
+{
+  "formatVersion": 1,
+  "illustrator": {
+    "repository": "https://github.com/ie3jp/illustrator-mcp-server",
+    "snapshotCommit": "57c5c101a5192c61535493f39b653e6f92b8eb29",
+    "packageVersion": "1.10.3",
+    "managerRuntimeVersion": "1.10.3-bridge.1",
+    "license": "MIT",
+    "runtimeDependencyLock": "runtime/locks/illustrator/package-lock.json",
+    "runtimeDependencyAudit": "npm audit --omit=dev passed for the manager-owned patched lock on 2026-10-08"
+  },
+  "rinnellasky": {
+    "repository": "https://github.com/Rinellasky/indesign-mcp",
+    "release": "v1.2.1",
+    "commit": "7292d7bf9549d85acb530cb1de7fb24a0b6a551f",
+    "snapshotFiles": {
+      "LICENSE.md": "9be74d8bb780b23d5faae3b43a5be5f7349aa17cb62730d9d5849f89bd6b1d4f",
+      "README.md": "d5813bc6e1f69acf20fe6423be2cc9a6f9736ed354bd35a61b6f732d439fcd5f",
+      "install/INSTALL_VIA_AI.md": "984f13fb1a61a339f154c383c8935e953e85498538f3c7f942ed89751b5782e4",
+      "install/install.ps1": "5ee235f888c352b32f627a00f1743e2b77704750512cd2d2cbdc0218f4a29380"
+    },
+    "artifacts": {
+      "indesign-mcp.dxt": {
+        "url": "https://github.com/Rinellasky/indesign-mcp/releases/download/v1.2.1/indesign-mcp.dxt",
+        "sha256": "e936c81d1c992a9d248b945a5fa4c4cdb8d6e7ab2f1be6cdf9b332e65fcc3257"
+      },
+      "indesign-mcp-plugin.ccx": {
+        "url": "https://github.com/Rinellasky/indesign-mcp/releases/download/v1.2.1/indesign-mcp-plugin.ccx",
+        "sha256": "20fc6c98a45968e9aa37745ec5d25eed93c5e30c15f31b917dc2586c551a74aa"
+      }
+    },
+    "managerPackage": {
+      "version": "1.2.1-bridge.1",
+      "sha256": "d859846acce5f3dfb4169509d2de3703b1ffedf1651a49a15c303c89178d9d67"
+    }
+  },
+  "adbProxy": {
+    "repository": "https://github.com/mikechambers/adb-mcp",
+    "commit": "afe5d09cdbdd4cc60434dce6b3f46fdafe15a21c",
+    "package": "adb-proxy-socket",
+    "version": "0.85.1"
+  },
+  "nodeRuntime": {
+    "version": "24.21.0",
+    "architecture": "darwin-arm64",
+    "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-arm64.tar.gz",
+    "sha256": "bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057"
+  }
+}

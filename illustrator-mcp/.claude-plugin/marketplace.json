@@ -1,0 +1,24 @@
+{
+  "name": "ie3jp-illustrator",
+  "owner": {
+    "name": "ie3jp",
+    "url": "https://github.com/ie3jp"
+  },
+  "description": "Plugins by IE3 — design tools for Adobe Illustrator: the illustrator-mcp-server MCP server and a preflight skill.",
+  "plugins": [
+    {
+      "name": "ie3-design-bridge",
+      "source": "./plugins/ie3-design-bridge",
+      "description": "Work with Adobe Illustrator from Claude — read, edit and export Illustrator documents, plus a pre-press preflight skill. Not affiliated with Adobe.",
+      "category": "design",
+      "tags": [
+        "illustrator",
+        "adobe-illustrator",
+        "graphic-design",
+        "vector",
+        "print",
+        "preflight"
+      ]
+    }
+  ]
+}

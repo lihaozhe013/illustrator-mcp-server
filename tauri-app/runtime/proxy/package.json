@@ -1,0 +1,17 @@
+{
+  "name": "adobe-ai-bridge-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "vitest run ../../tests/unit/proxy.test.mjs"
+  },
+  "dependencies": {
+    "express": "5.2.1",
+    "socket.io": "4.8.4"
+  },
+  "devDependencies": {
+    "socket.io-client": "4.8.4"
+  }
+}

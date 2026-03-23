@@ -1,0 +1,11 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+  "files": {
+    "ignoreUnknown": true,
+    "includes": ["apps/desktop/src/**", "apps/desktop/vite.config.ts", "vitest.config.ts", "tests/**/*.mjs", "packages/**/*.ts"]
+  },
+  "formatter": { "indentStyle": "space", "indentWidth": 2 },
+  "javascript": { "formatter": { "quoteStyle": "double", "semicolons": "always" }, "linter": { "enabled": true } },
+  "json": { "formatter": { "trailingCommas": "none" } },
+  "assist": { "actions": { "source": { "organizeImports": "on" } } }
+}

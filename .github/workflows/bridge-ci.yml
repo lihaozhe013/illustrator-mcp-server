@@ -1,0 +1,51 @@
+name: Adobe AI Bridge CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  manager:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: tauri-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: tauri-app/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Install manager dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify manager
+        run: pnpm verify
+
+  illustrator-upstream:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: illustrator-mcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: illustrator-mcp/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
