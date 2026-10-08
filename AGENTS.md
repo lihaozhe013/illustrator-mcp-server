@@ -7,7 +7,7 @@ This repository contains two Adobe MCP upstreams and one independent Tauri manag
 - `illustrator-mcp/` is the tracked Illustrator MCP upstream snapshot. Its `CLAUDE.md` contains the original author's Illustrator-specific development and release guidance. Preserve its source, lockfile, plugin, tests, examples, and license notices; run upstream commands from this directory.
 - `indesign-mcp/` is the tracked InDesign upstream snapshot at the revision in `tauri-app/runtime/pins.lock.json`. Sync it manually after review; do not clone, reset, or rewrite it during builds. The upstream Git repository contains documentation and installers, while its Python/UXP implementation is distributed in checksum-pinned release archives.
 - `tauri-app/` owns the Adobe AI Bridge manager, runtime wrappers, patch stack, tests, and builds. Keep downloaded/extracted third-party sources in its ignored runtime cache.
-- Root `README.md`, `SPEC.md`, `AGENTS.md`, `docs/`, `.gitignore`, and `.github/` describe and build the combined manager. The root workflow must never run the Illustrator upstream's npm publication workflow.
+- Root `README.md`, `SPEC.md`, `AGENTS.md`, and `docs/` describe the combined manager. This repository intentionally has no CI or GitHub automation; run the documented checks locally before committing or packaging.
 
 ## Engineering rules
 

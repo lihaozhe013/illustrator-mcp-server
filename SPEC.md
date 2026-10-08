@@ -19,13 +19,13 @@ The Illustrator bridge reuses the tracked upstream snapshot in `illustrator-mcp/
 - `tauri-app/`: independent Tauri 2 manager, Rust launcher/core, React/TypeScript UI, packaging, and tests.
 - Root `docs/`: combined audit, architecture, compatibility, risk, release, and manual E2E records.
 
-The root `.github/workflows/` builds/tests the combined manager. The upstream Illustrator npm release workflow is retained under `illustrator-mcp/.github/` as provenance and must never be run as the root workflow.
+This repository intentionally has no CI or GitHub automation. Run verification commands locally before committing or packaging. Upstream snapshots remain source references; upstream automation configuration is not part of this project.
 
 ## Milestones and gates
 
 ### M0 — Restructure, audit, and bridge spikes
 
-1. Move the complete tracked Illustrator upstream tree into `illustrator-mcp/` without changing its contents. Record a file/hash manifest before the move and compare after; preserve its nested workflow as source provenance. Run its build and unit suite from the new working directory.
+1. Move the complete tracked Illustrator upstream source tree into `illustrator-mcp/` without changing source contents. Record a file/hash manifest before the move and compare after. Do not retain upstream CI or release automation. Run its build and unit suite from the new working directory.
 2. Pin the InDesign Git commit and tracked snapshot file hashes, release DXT/CCX checksums, proxy commit, runtime versions, and licenses in a manager-owned lock manifest. Synchronize the Git snapshot manually after review. The build verifies the tracked snapshot, downloads checksum-matched DXT/CCX artifacts, extracts release-only implementation into an ignored cache, verifies third-party notices, and applies patches only in build staging.
 3. Independently run both native upstream stdio servers in test harnesses. Verify initialize, tools/list, a benign read, error/close behavior, and clean protocol stdout.
 4. Test an Illustrator executor mock and a mock InDesign UXP Socket.IO plugin. Validate the authenticated plugin registration, request correlation, timeout/disconnect behavior, concurrent clients, and redacted logs.
