@@ -5,14 +5,20 @@ import type {
 } from "@adobe-ai-bridge/client-config";
 import { createConfigPreview } from "@adobe-ai-bridge/client-config";
 import { invoke } from "@tauri-apps/api/core";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type { LanguagePreference, Locale } from "./i18n";
+import {
+  detectSystemLocale,
+  formatTemplate,
+  localizeActionResult,
+  readLanguagePreference,
+  saveLanguagePreference,
+  strings,
+} from "./i18n";
 import type { ActionResult, ClientConfigDocument } from "./types";
 
 const bridges: BridgeId[] = ["illustrator", "indesign"];
-const clients: Array<{ id: ClientId; label: string }> = [
-  { id: "opencode", label: "OpenCode" },
-  { id: "workbuddy", label: "Tencent WorkBuddy" },
-];
+const clients: ClientId[] = ["opencode", "workbuddy"];
 
 function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -35,6 +41,12 @@ function errorText(error: unknown): string {
 
 export function App() {
   const [native] = useState(isTauri);
+  const [languagePreference, setLanguagePreference] =
+    useState<LanguagePreference>(readLanguagePreference);
+  const [systemLocale, setSystemLocale] = useState<Locale>(detectSystemLocale);
+  const locale =
+    languagePreference === "system" ? systemLocale : languagePreference;
+  const copy = strings[locale];
   const [selectedClients, setSelectedClients] = useState<
     Record<ClientId, boolean>
   >({
@@ -44,6 +56,22 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState("");
   const [result, setResult] = useState<ActionResult | null>(null);
+
+  useEffect(() => {
+    document.documentElement.lang = locale;
+    document
+      .querySelector('meta[name="description"]')
+      ?.setAttribute("content", copy.metaDescription);
+    const updateSystemLocale = () => setSystemLocale(detectSystemLocale());
+    window.addEventListener("languagechange", updateSystemLocale);
+    return () =>
+      window.removeEventListener("languagechange", updateSystemLocale);
+  }, [copy.metaDescription, locale]);
+
+  const chooseLanguage = (preference: LanguagePreference) => {
+    setLanguagePreference(preference);
+    saveLanguagePreference(preference);
+  };
 
   const toggleClient = (client: ClientId) => {
     setSelectedClients((current) => ({
@@ -56,22 +84,22 @@ export function App() {
     if (!native || busy) return;
     setBusy(true);
     setResult(null);
-    setPhase("Installing or replacing both Adobe runtimes…");
+    setPhase(copy.installingRuntimes);
 
     try {
       const runtimeResult = await invoke<ActionResult>("install_all_command");
       if (!runtimeResult.ok) {
-        setResult(runtimeResult);
+        setResult(localizeActionResult(runtimeResult, locale, copy));
         return;
       }
 
-      const selected = clients.filter(({ id }) => selectedClients[id]);
+      const selected = clients.filter((id) => selectedClients[id]);
       if (selected.length === 0) {
-        setResult(runtimeResult);
+        setResult(localizeActionResult(runtimeResult, locale, copy));
         return;
       }
 
-      setPhase("Connecting the selected clients…");
+      setPhase(copy.connectingClients);
       const launcherPath = await invoke<string>("get_launcher_path_command");
       const issues: string[] = [];
       for (const client of selected) {
@@ -79,10 +107,10 @@ export function App() {
           try {
             const document = await invoke<ClientConfigDocument>(
               "read_client_config_command",
-              { client: client.id },
+              { client },
             );
             const preview: ConfigPreview = createConfigPreview({
-              client: client.id,
+              client,
               bridge,
               configPath: document.path,
               text: document.text,
@@ -90,7 +118,10 @@ export function App() {
             });
             if (preview.conflict) {
               issues.push(
-                `${client.label}: ${bridge} entry already exists with different settings.`,
+                formatTemplate(copy.clientConflict, {
+                  client: copy.clientLabels[client],
+                  bridge: copy.bridgeLabels[bridge],
+                }),
               );
               continue;
             }
@@ -99,41 +130,73 @@ export function App() {
             const applied = await invoke<ActionResult>(
               "apply_client_config_command",
               {
-                client: client.id,
+                client,
                 bridgeId: bridge,
                 expectedSha256: document.sha256,
                 text: preview.after,
               },
             );
-            if (!applied.ok) issues.push(`${client.label}: ${applied.message}`);
+            if (!applied.ok) {
+              const localized = localizeActionResult(applied, locale, copy);
+              issues.push(
+                formatTemplate(copy.clientIssue, {
+                  client: copy.clientLabels[client],
+                  error: localized.message,
+                }),
+              );
+            }
           } catch (error) {
-            issues.push(`${client.label}: ${errorText(error)}`);
+            issues.push(
+              formatTemplate(copy.clientIssue, {
+                client: copy.clientLabels[client],
+                error: errorText(error),
+              }),
+            );
           }
         }
       }
 
+      const localizedRuntimeResult = localizeActionResult(
+        runtimeResult,
+        locale,
+        copy,
+      );
       setResult(
         issues.length > 0
           ? {
-              ...runtimeResult,
+              ...localizedRuntimeResult,
               ok: false,
               code: "CLIENT_CONFIGURATION_INCOMPLETE",
-              message: `Both runtimes are installed. Some client entries need attention: ${issues.join(" ")}`,
-              recovery:
-                "Resolve the conflicting client entries, then run Install / Update again. Existing client settings were preserved.",
+              message: formatTemplate(copy.clientsNeedAttention, {
+                issues: issues.join(" "),
+              }),
+              recovery: copy.resolveClientConflict,
               lastVerifiedLayer: "client configuration",
               timestamp: new Date().toISOString(),
             }
           : {
-              ...runtimeResult,
-              message: `${runtimeResult.message} Configured: ${selected.map(({ label }) => label).join(", ")}.`,
+              ...localizedRuntimeResult,
+              message: `${localizedRuntimeResult.message} ${formatTemplate(
+                copy.configuredClients,
+                {
+                  clients: selected
+                    .map((id) => copy.clientLabels[id])
+                    .join(", "),
+                },
+              )}`,
             },
       );
     } catch (error) {
       setResult(
-        failure(
-          `Installation could not complete: ${errorText(error)}`,
-          "Check that this is a complete Adobe AI Bridge build, then run Install / Update again.",
+        localizeActionResult(
+          failure(
+            formatTemplate(copy.installationFailed, {
+              error: errorText(error),
+            }),
+            copy.retryInstall,
+          ),
+          locale,
+          copy,
         ),
       );
     } finally {
@@ -146,14 +209,21 @@ export function App() {
     if (!native || busy) return;
     setBusy(true);
     setResult(null);
-    setPhase("Opening the InDesign panel installer…");
+    setPhase(copy.openingPanelInstaller);
     try {
-      setResult(await invoke<ActionResult>("setup_indesign_panel_command"));
+      const panelResult = await invoke<ActionResult>(
+        "setup_indesign_panel_command",
+      );
+      setResult(localizeActionResult(panelResult, locale, copy));
     } catch (error) {
       setResult(
-        failure(
-          `The InDesign panel setup could not start: ${errorText(error)}`,
-          "Run Install / Update first, then retry the panel setup.",
+        localizeActionResult(
+          failure(
+            formatTemplate(copy.panelSetupFailed, { error: errorText(error) }),
+            copy.retryPanel,
+          ),
+          locale,
+          copy,
         ),
       );
     } finally {
@@ -165,11 +235,7 @@ export function App() {
   return (
     <main className="app-shell installer-shell">
       <header className="topbar">
-        <a
-          className="wordmark"
-          href="#install"
-          aria-label="Adobe AI Bridge home"
-        >
+        <a className="wordmark" href="#install" aria-label={copy.appHome}>
           <span className="wordmark-mark" aria-hidden="true">
             AB
           </span>
@@ -177,36 +243,48 @@ export function App() {
             Adobe <strong>AI Bridge</strong>
           </span>
         </a>
-        <span className="app-version">Illustrator · InDesign</span>
+        <div className="topbar-tools">
+          <label className="language-control">
+            <span>{copy.language}</span>
+            <select
+              aria-label={copy.language}
+              value={languagePreference}
+              onChange={(event) =>
+                chooseLanguage(event.target.value as LanguagePreference)
+              }
+            >
+              <option value="system">{copy.followSystem}</option>
+              <option value="en">{copy.english}</option>
+              <option value="zh-CN">{copy.simplifiedChinese}</option>
+            </select>
+          </label>
+          <span className="app-version">{copy.appVersion}</span>
+        </div>
       </header>
 
       <section className="page-heading" id="install">
-        <div className="eyebrow">LIGHTWEIGHT ADOBE MCP BRIDGE</div>
-        <h1>Install the full toolset</h1>
-        <p>
-          Install both bridges and connect them to your selected agent clients.
-          Agents can edit open documents and run trusted JSX scripts directly in
-          Adobe apps.
-        </p>
+        <div className="eyebrow">{copy.eyebrow}</div>
+        <h1>{copy.pageTitle}</h1>
+        <p>{copy.pageIntro}</p>
       </section>
 
       <section className="installer-card" aria-labelledby="client-heading">
         <div className="installer-card-heading">
           <div>
-            <div className="eyebrow">AGENT CLIENTS</div>
-            <h2 id="client-heading">Configure clients</h2>
+            <div className="eyebrow">{copy.clientsEyebrow}</div>
+            <h2 id="client-heading">{copy.configureClients}</h2>
           </div>
         </div>
         <div className="client-options">
           {clients.map((client) => (
-            <label className="client-option" key={client.id}>
+            <label className="client-option" key={client}>
               <input
                 type="checkbox"
-                checked={selectedClients[client.id]}
+                checked={selectedClients[client]}
                 disabled={busy}
-                onChange={() => toggleClient(client.id)}
+                onChange={() => toggleClient(client)}
               />
-              <span>{client.label}</span>
+              <span>{copy.clientLabels[client]}</span>
             </label>
           ))}
         </div>
@@ -217,7 +295,7 @@ export function App() {
           disabled={!native || busy}
           onClick={() => void install()}
         >
-          {busy ? "Working…" : "Install / Update"}
+          {busy ? copy.working : copy.installUpdate}
         </button>
 
         {busy ? (
@@ -240,18 +318,15 @@ export function App() {
 
         {!native ? (
           <aside className="notice notice-warning" role="status">
-            Run Install / Update from the Adobe AI Bridge desktop app.
+            {copy.desktopOnly}
           </aside>
         ) : null}
       </section>
 
       <section className="panel-setup" aria-labelledby="panel-heading">
         <div>
-          <h2 id="panel-heading">InDesign panel</h2>
-          <p>
-            Creative Cloud requires you to approve the panel installation. This
-            opens the installer and copies the connection token.
-          </p>
+          <h2 id="panel-heading">{copy.panelHeading}</h2>
+          <p>{copy.panelDescription}</p>
         </div>
         <button
           type="button"
@@ -259,7 +334,7 @@ export function App() {
           disabled={!native || busy}
           onClick={() => void setupInDesignPanel()}
         >
-          Set up InDesign panel
+          {copy.setupPanel}
         </button>
       </section>
     </main>

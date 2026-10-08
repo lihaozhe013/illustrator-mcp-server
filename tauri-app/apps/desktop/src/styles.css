@@ -36,6 +36,31 @@ button {
   border-bottom: 1px solid #e3e0d9;
 }
 
+.topbar-tools {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.language-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #7d8580;
+  font-size: 11px;
+}
+
+.language-control select {
+  max-width: 132px;
+  border: 1px solid #dcd8cf;
+  border-radius: 6px;
+  padding: 5px 7px;
+  background: #fbfaf8;
+  color: #34433b;
+  font: inherit;
+  cursor: pointer;
+}
+
 .wordmark {
   display: inline-flex;
   align-items: center;
@@ -247,6 +272,22 @@ h1 {
 }
 
 @media (max-width: 520px) {
+  .topbar-tools {
+    gap: 9px;
+  }
+
+  .language-control {
+    gap: 4px;
+  }
+
+  .language-control select {
+    max-width: 105px;
+  }
+
+  .app-version {
+    display: none;
+  }
+
   .app-shell {
     width: calc(100vw - 36px);
   }
