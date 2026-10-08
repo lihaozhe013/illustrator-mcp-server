@@ -16,6 +16,8 @@ const en = {
     "Install both bridges and connect them to your selected agent clients. Agents can edit open documents and run trusted JSX scripts directly in Adobe apps.",
   clientsEyebrow: "AGENT CLIENTS",
   configureClients: "Configure clients",
+  clientDetectionHint:
+    "Installed clients are selected automatically. You can change the selection.",
   installUpdate: "Install / Update",
   working: "Working…",
   installingRuntimes: "Installing or replacing both Adobe runtimes…",
@@ -23,11 +25,28 @@ const en = {
   clientConflict:
     "{client}: the {bridge} entry already exists with different settings.",
   clientIssue: "{client}: {error}",
-  clientsNeedAttention:
-    "Both runtimes are installed. Some client entries need attention: {issues}",
+  clientsNeedAttention: "Some client entries need attention: {issues}",
   resolveClientConflict:
     "Resolve the conflicting client entries, then run Install / Update again. Existing client settings were preserved.",
   configuredClients: "Configured: {clients}.",
+  noClientSelected: "No agent clients were selected.",
+  noClientSelectedRecovery:
+    "Run Install / Update again after selecting the client you want to connect.",
+  noClientsConfigured: "No client entries were configured.",
+  noRuntimeForClientConfig:
+    "No bridge runtime was installed, so no client entries were written.",
+  clientIssues: "Configuration issues: {issues}",
+  runtimeStatus: "Runtimes: {detail}",
+  clientStatus: "Clients: {detail}",
+  proxyStatus: "InDesign proxy: {detail}",
+  proxyReady:
+    "The proxy is healthy. Connect the InDesign panel before editing InDesign documents.",
+  proxyNotReady: "The InDesign proxy is not ready.",
+  proxyNotStarted: "The proxy was not started.",
+  proxyWarning:
+    "Selected client entries were still configured. Retry the proxy when ready.",
+  proxyPendingRecovery:
+    "The MCP entries are installed. Review the InDesign proxy log and run Install / Update again after correcting the proxy issue.",
   installationFailed: "Installation could not complete: {error}",
   retryInstall:
     "Check that this is a complete Adobe AI Bridge build, then run Install / Update again.",
@@ -42,7 +61,7 @@ const en = {
   installedRuntimes: "Installed both Adobe bridges.",
   installedRuntimesRecovery:
     "Restart or reload the selected clients to load the full tool lists.",
-  installIncomplete: "The Adobe bridges were installed with issues.",
+  installIncomplete: "Some Adobe bridge runtimes could not be installed.",
   installFailed: "The Adobe bridges could not be installed.",
   panelOpened:
     "Creative Cloud was asked to open the InDesign panel installer, and the connection token was copied.",
@@ -90,16 +109,31 @@ const zhCN = {
     "安装 Illustrator 和 InDesign 两套桥接服务，并连接所选 Agent 客户端。Agent 可以直接编辑已打开的文档，也可以在 Adobe 应用中运行可信的 JSX 脚本。",
   clientsEyebrow: "AGENT 客户端",
   configureClients: "配置客户端",
+  clientDetectionHint: "自动勾选已检测到的客户端；你也可以自行更改选择。",
   installUpdate: "安装 / 更新",
   working: "处理中…",
   installingRuntimes: "正在安装或替换两套 Adobe 运行时…",
   connectingClients: "正在连接所选客户端…",
   clientConflict: "{client}：{bridge} 条目已存在，但配置内容不同。",
   clientIssue: "{client}：{error}",
-  clientsNeedAttention: "两套运行时已安装。部分客户端条目需要处理：{issues}",
+  clientsNeedAttention: "部分客户端条目需要处理：{issues}",
   resolveClientConflict:
     "解决冲突的客户端条目后，再次运行“安装 / 更新”。现有客户端设置已保留。",
   configuredClients: "已配置：{clients}。",
+  noClientSelected: "未选择 Agent 客户端。",
+  noClientSelectedRecovery: "选择要连接的客户端后，再次运行“安装 / 更新”。",
+  noClientsConfigured: "没有写入客户端条目。",
+  noRuntimeForClientConfig: "没有 bridge 安装成功，因此没有写入客户端条目。",
+  clientIssues: "配置问题：{issues}",
+  runtimeStatus: "运行时：{detail}",
+  clientStatus: "客户端：{detail}",
+  proxyStatus: "InDesign proxy：{detail}",
+  proxyReady: "Proxy 运行正常。编辑 InDesign 文档前，请先连接 InDesign 面板。",
+  proxyNotReady: "InDesign proxy 尚未就绪。",
+  proxyNotStarted: "Proxy 未启动。",
+  proxyWarning: "所选客户端条目已写入。Proxy 修复后可再次运行“安装 / 更新”。",
+  proxyPendingRecovery:
+    "MCP 条目已安装。请检查 InDesign proxy 日志，排除问题后再次运行“安装 / 更新”。",
   installationFailed: "安装未完成：{error}",
   retryInstall:
     "确认这是完整的 Adobe AI Bridge 安装包，然后再次运行“安装 / 更新”。",
@@ -113,7 +147,7 @@ const zhCN = {
   desktopOnly: "请在 Adobe AI Bridge 桌面应用中运行“安装 / 更新”。",
   installedRuntimes: "Illustrator 和 InDesign 桥接服务均已安装。",
   installedRuntimesRecovery: "重启或重新加载所选客户端，即可载入完整工具列表。",
-  installIncomplete: "Adobe 桥接服务已安装，但仍有问题需要处理。",
+  installIncomplete: "部分 Adobe 桥接运行时未能安装。",
   installFailed: "Adobe 桥接服务安装失败。",
   panelOpened:
     "已请求 Creative Cloud 打开 InDesign 面板安装器，并已复制连接令牌。",
@@ -210,6 +244,10 @@ export function localizeActionResult<T extends ActionResultLike>(
     BRIDGE_INSTALL_FAILED: [
       `${copy.installFailed} ${copy.detailsPrefix}${result.message}`,
       copy.retryInstall,
+    ],
+    INDESIGN_PROXY_NOT_HEALTHY: [
+      `${copy.proxyNotReady} ${copy.detailsPrefix}${result.message}`,
+      copy.proxyPendingRecovery,
     ],
     INDESIGN_PANEL_SETUP_OPENED: [copy.panelOpened, copy.panelOpenedRecovery],
     UXP_PACKAGE_MISSING: [

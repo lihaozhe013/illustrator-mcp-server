@@ -2,7 +2,7 @@
 
 use adobe_ai_bridge_core::{
     apply_client_config, copy_indesign_plugin_token, install_all_bridges, read_client_config,
-    ActionResult, BridgeId,
+    ActionResult, BridgeId, DetectedClients, InstallReport,
 };
 use tauri::{AppHandle, Manager};
 
@@ -49,7 +49,7 @@ fn get_launcher_path_command() -> String {
 }
 
 #[tauri::command]
-async fn install_all_command(app: AppHandle) -> Result<ActionResult, String> {
+async fn install_all_command(app: AppHandle) -> Result<InstallReport, String> {
     let resource_dir = app
         .path()
         .resource_dir()
@@ -57,6 +57,13 @@ async fn install_all_command(app: AppHandle) -> Result<ActionResult, String> {
     tauri::async_runtime::spawn_blocking(move || install_all_bridges(&resource_dir))
         .await
         .map_err(|error| format!("runtime installation task failed: {error}"))
+}
+
+#[tauri::command]
+async fn detect_clients_command() -> DetectedClients {
+    tauri::async_runtime::spawn_blocking(adobe_ai_bridge_core::client_detection::detect_clients)
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -109,6 +116,7 @@ fn main() {
             read_client_config_command,
             apply_client_config_command,
             get_launcher_path_command,
+            detect_clients_command,
             install_all_command,
             setup_indesign_panel_command,
         ])

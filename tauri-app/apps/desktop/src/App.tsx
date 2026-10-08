@@ -1,11 +1,6 @@
-import type {
-  BridgeId,
-  ClientId,
-  ConfigPreview,
-} from "@adobe-ai-bridge/client-config";
-import { createConfigPreview } from "@adobe-ai-bridge/client-config";
+import type { ClientId } from "@adobe-ai-bridge/client-config";
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { LanguagePreference, Locale } from "./i18n";
 import {
   detectSystemLocale,
@@ -15,9 +10,14 @@ import {
   saveLanguagePreference,
   strings,
 } from "./i18n";
-import type { ActionResult, ClientConfigDocument } from "./types";
+import { completeInstallation } from "./installer";
+import type {
+  ActionResult,
+  DetectedClients,
+  InstallNotice,
+  InstallReport,
+} from "./types";
 
-const bridges: BridgeId[] = ["illustrator", "indesign"];
 const clients: ClientId[] = ["opencode", "workbuddy"];
 
 function isTauri(): boolean {
@@ -50,12 +50,18 @@ export function App() {
   const [selectedClients, setSelectedClients] = useState<
     Record<ClientId, boolean>
   >({
-    opencode: true,
-    workbuddy: true,
+    opencode: false,
+    workbuddy: false,
   });
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState("");
-  const [result, setResult] = useState<ActionResult | null>(null);
+  const [result, setResult] = useState<InstallNotice | null>(null);
+  const selectedClientsRef = useRef(selectedClients);
+  const manuallySelectedClients = useRef<Record<ClientId, boolean>>({
+    opencode: false,
+    workbuddy: false,
+  });
+  const clientDetection = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     document.documentElement.lang = locale;
@@ -68,16 +74,42 @@ export function App() {
       window.removeEventListener("languagechange", updateSystemLocale);
   }, [copy.metaDescription, locale]);
 
+  useEffect(() => {
+    if (!native) return;
+
+    let active = true;
+    clientDetection.current = invoke<DetectedClients>("detect_clients_command")
+      .then((detected) => {
+        if (!active) return;
+        const next = { ...selectedClientsRef.current };
+        for (const client of clients) {
+          if (!manuallySelectedClients.current[client]) {
+            next[client] = detected[client];
+          }
+        }
+        selectedClientsRef.current = next;
+        setSelectedClients(next);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+    };
+  }, [native]);
+
   const chooseLanguage = (preference: LanguagePreference) => {
     setLanguagePreference(preference);
     saveLanguagePreference(preference);
   };
 
   const toggleClient = (client: ClientId) => {
-    setSelectedClients((current) => ({
-      ...current,
-      [client]: !current[client],
-    }));
+    manuallySelectedClients.current[client] = true;
+    const next = {
+      ...selectedClientsRef.current,
+      [client]: !selectedClientsRef.current[client],
+    };
+    selectedClientsRef.current = next;
+    setSelectedClients(next);
   };
 
   const install = async () => {
@@ -87,118 +119,38 @@ export function App() {
     setPhase(copy.installingRuntimes);
 
     try {
-      const runtimeResult = await invoke<ActionResult>("install_all_command");
-      if (!runtimeResult.ok) {
-        setResult(localizeActionResult(runtimeResult, locale, copy));
-        return;
+      await clientDetection.current;
+      const report = await invoke<InstallReport>("install_all_command");
+
+      const selected = clients.filter((id) => selectedClientsRef.current[id]);
+      if (selected.length > 0 && report.installedBridges.length > 0) {
+        setPhase(copy.connectingClients);
       }
-
-      const selected = clients.filter((id) => selectedClients[id]);
-      if (selected.length === 0) {
-        setResult(localizeActionResult(runtimeResult, locale, copy));
-        return;
-      }
-
-      setPhase(copy.connectingClients);
-      const launcherPath = await invoke<string>("get_launcher_path_command");
-      const issues: string[] = [];
-      for (const client of selected) {
-        for (const bridge of bridges) {
-          try {
-            const document = await invoke<ClientConfigDocument>(
-              "read_client_config_command",
-              { client },
-            );
-            const preview: ConfigPreview = createConfigPreview({
-              client,
-              bridge,
-              configPath: document.path,
-              text: document.text,
-              launcherPath,
-            });
-            if (preview.conflict) {
-              issues.push(
-                formatTemplate(copy.clientConflict, {
-                  client: copy.clientLabels[client],
-                  bridge: copy.bridgeLabels[bridge],
-                }),
-              );
-              continue;
-            }
-            if (preview.alreadyConfigured) continue;
-
-            const applied = await invoke<ActionResult>(
-              "apply_client_config_command",
-              {
-                client,
-                bridgeId: bridge,
-                expectedSha256: document.sha256,
-                text: preview.after,
-              },
-            );
-            if (!applied.ok) {
-              const localized = localizeActionResult(applied, locale, copy);
-              issues.push(
-                formatTemplate(copy.clientIssue, {
-                  client: copy.clientLabels[client],
-                  error: localized.message,
-                }),
-              );
-            }
-          } catch (error) {
-            issues.push(
-              formatTemplate(copy.clientIssue, {
-                client: copy.clientLabels[client],
-                error: errorText(error),
-              }),
-            );
-          }
-        }
-      }
-
-      const localizedRuntimeResult = localizeActionResult(
-        runtimeResult,
+      setResult(
+        await completeInstallation({
+          report,
+          clients: selected,
+          locale,
+          copy,
+          invoke,
+        }),
+      );
+    } catch (error) {
+      const failed = localizeActionResult(
+        failure(
+          formatTemplate(copy.installationFailed, {
+            error: errorText(error),
+          }),
+          copy.retryInstall,
+        ),
         locale,
         copy,
       );
-      setResult(
-        issues.length > 0
-          ? {
-              ...localizedRuntimeResult,
-              ok: false,
-              code: "CLIENT_CONFIGURATION_INCOMPLETE",
-              message: formatTemplate(copy.clientsNeedAttention, {
-                issues: issues.join(" "),
-              }),
-              recovery: copy.resolveClientConflict,
-              lastVerifiedLayer: "client configuration",
-              timestamp: new Date().toISOString(),
-            }
-          : {
-              ...localizedRuntimeResult,
-              message: `${localizedRuntimeResult.message} ${formatTemplate(
-                copy.configuredClients,
-                {
-                  clients: selected
-                    .map((id) => copy.clientLabels[id])
-                    .join(", "),
-                },
-              )}`,
-            },
-      );
-    } catch (error) {
-      setResult(
-        localizeActionResult(
-          failure(
-            formatTemplate(copy.installationFailed, {
-              error: errorText(error),
-            }),
-            copy.retryInstall,
-          ),
-          locale,
-          copy,
-        ),
-      );
+      setResult({
+        message: failed.message,
+        recovery: failed.recovery,
+        severity: "error",
+      });
     } finally {
       setBusy(false);
       setPhase("");
@@ -214,18 +166,26 @@ export function App() {
       const panelResult = await invoke<ActionResult>(
         "setup_indesign_panel_command",
       );
-      setResult(localizeActionResult(panelResult, locale, copy));
+      const localized = localizeActionResult(panelResult, locale, copy);
+      setResult({
+        message: localized.message,
+        recovery: localized.recovery,
+        severity: localized.ok ? "success" : "error",
+      });
     } catch (error) {
-      setResult(
-        localizeActionResult(
-          failure(
-            formatTemplate(copy.panelSetupFailed, { error: errorText(error) }),
-            copy.retryPanel,
-          ),
-          locale,
-          copy,
+      const failed = localizeActionResult(
+        failure(
+          formatTemplate(copy.panelSetupFailed, { error: errorText(error) }),
+          copy.retryPanel,
         ),
+        locale,
+        copy,
       );
+      setResult({
+        message: failed.message,
+        recovery: failed.recovery,
+        severity: "error",
+      });
     } finally {
       setBusy(false);
       setPhase("");
@@ -288,6 +248,7 @@ export function App() {
             </label>
           ))}
         </div>
+        <p className="client-detection-hint">{copy.clientDetectionHint}</p>
 
         <button
           type="button"
@@ -307,11 +268,13 @@ export function App() {
 
         {result ? (
           <aside
-            className={`notice installer-notice ${result.ok ? "notice-success" : "notice-error"}`}
+            className={`notice installer-notice notice-${result.severity}`}
             role="status"
             aria-live="polite"
           >
-            <div className="notice-heading">{result.message}</div>
+            <div className="notice-heading installer-result-heading">
+              {result.message}
+            </div>
             <div>{result.recovery}</div>
           </aside>
         ) : null}

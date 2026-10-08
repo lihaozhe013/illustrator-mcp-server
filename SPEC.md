@@ -37,9 +37,9 @@ The Illustrator bridge reuses the tracked upstream snapshot in `illustrator-mcp/
 1. Bundle the two MCP runtimes, shared Node runtime, stable launcher, and InDesign proxy.
 2. Install or replace the complete runtime bundles through one `Install / Update` action.
 3. Atomically switch active runtime pointers, remove older app-owned runtime versions, and restart the InDesign proxy.
-4. Add the selected client entries while preserving JSONC comments and unrelated settings. The manager remains closed during normal client use.
+4. Detect installed OpenCode and WorkBuddy clients for the initial selection, while allowing manual selection. Register only successfully installed bridges in selected clients, preserving JSONC comments and unrelated settings. Proxy startup health is reported separately and does not block client registration.
 
-**Gate:** first install and same-version replacement pass against temporary install roots; user configs retain unrelated content.
+**Gate:** first install and same-version replacement pass against temporary install roots; a delayed or failed proxy health check still allows installed bridge entries to be registered; a WorkBuddy-only machine does not receive an OpenCode entry unless selected; user configs retain unrelated content.
 
 ### M2 — Complete MCP tool surface
 
@@ -59,7 +59,7 @@ The Illustrator bridge reuses the tracked upstream snapshot in `illustrator-mcp/
 
 ### M4 — Combined arm64 packaging
 
-Produce one DMG with both runtimes and required notices. Verify first install, same-version reinstall, upgrade cleanup, client config preservation, and operation after closing Tauri. Creative Cloud may require a user to approve the InDesign UXP panel manually. Keep unsigned builds labeled as internal until signed and notarized.
+Produce one versioned DMG with both runtimes and required notices. Verify first install, same-version reinstall, upgrade cleanup, client detection, client config preservation, and operation after closing Tauri. Creative Cloud may require a user to approve the InDesign UXP panel manually. Keep unsigned builds labeled as internal until signed and notarized.
 
 ## Runtime interfaces
 
@@ -67,6 +67,8 @@ Produce one DMG with both runtimes and required notices. Verify first install, s
 - Client server IDs: `illustrator-ai-bridge` and `indesign-ai-bridge`.
 - MCP protocol stdout is reserved for JSON-RPC; diagnostics go to stderr and redacted logs.
 - InDesign uses the existing authenticated loopback UXP proxy on `127.0.0.1:3001`.
+- Installation reports installed bridges, runtime outcome, and proxy outcome independently. Proxy startup waits up to 30 seconds; a proxy warning does not block registration of installed bridges.
+- Client detection is read-only, bounded to two seconds, and only sets the initial selection. Failed detection leaves manual client selection available.
 - Runtime installs contain only the active app-owned version. Client settings, connection token, Adobe documents, and unrelated files are preserved.
 
 ## Verification labels

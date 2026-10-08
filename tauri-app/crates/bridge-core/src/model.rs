@@ -130,3 +130,18 @@ impl ActionResult {
         }
     }
 }
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallReport {
+    pub installed_bridges: Vec<BridgeId>,
+    pub runtime_result: ActionResult,
+    pub proxy_result: Option<ActionResult>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectedClients {
+    pub opencode: bool,
+    pub workbuddy: bool,
+}

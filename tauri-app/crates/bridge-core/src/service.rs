@@ -17,6 +17,7 @@ use crate::{
 };
 
 const LAUNCH_AGENT_LABEL: &str = "org.adobe-ai-bridge.indesign-proxy";
+const PROXY_START_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[must_use]
 #[allow(clippy::too_many_lines)]
@@ -143,22 +144,14 @@ pub fn start_indesign_proxy() -> ActionResult {
         );
     }
 
-    let deadline = Instant::now() + Duration::from_secs(3);
-    while Instant::now() < deadline {
-        if proxy_health().is_some() {
-            return ActionResult::success("INDESIGN_PROXY_STARTED", "The authenticated proxy is responding on 127.0.0.1:3001.", "Open the InDesign UXP panel, then copy the one-time token from the manager into its password field.");
-        }
-        thread::sleep(Duration::from_millis(100));
+    if wait_for_proxy_health(PROXY_START_TIMEOUT, || proxy_health().is_some()) {
+        return ActionResult::success("INDESIGN_PROXY_STARTED", "The authenticated proxy is responding on 127.0.0.1:3001.", "Open the InDesign UXP panel, then copy the one-time token from the manager into its password field.");
     }
-    if TcpStream::connect_timeout(&loopback_proxy_address(), Duration::from_millis(150)).is_ok() {
-        ActionResult::failure("INDESIGN_PROXY_PORT_CONFLICT", "Port 3001 is occupied by another local service; the manager did not stop or replace it.", "Close the other app yourself or change the proxy port in a future manager configuration, then retry.")
-    } else {
-        ActionResult::failure(
-            "INDESIGN_PROXY_NOT_HEALTHY",
-            "The LaunchAgent started but the InDesign proxy did not pass its health check.",
-            "Review the redacted InDesign proxy log and retry after correcting the reported issue.",
-        )
-    }
+    ActionResult::failure(
+        "INDESIGN_PROXY_NOT_HEALTHY",
+        "The InDesign proxy did not pass its health check within 30 seconds.",
+        "Both runtimes and selected client entries were still installed. Review the InDesign proxy log and retry the proxy after correcting the reported issue.",
+    )
 }
 
 #[must_use]
@@ -419,9 +412,31 @@ fn proxy_health() -> Option<Value> {
         .ok()?;
     let mut response = String::new();
     stream.read_to_string(&mut response).ok()?;
-    let body = response.split_once("\r\n\r\n")?.1;
+    parse_proxy_health_response(&response)
+}
+
+fn parse_proxy_health_response(response: &str) -> Option<Value> {
+    let (headers, body) = response.split_once("\r\n\r\n")?;
+    let status = headers.lines().next()?.split_whitespace().nth(1)?;
+    if status != "200" {
+        return None;
+    }
     let health: Value = serde_json::from_str(body).ok()?;
     (health.get("bridge").and_then(Value::as_str) == Some("indesign")).then_some(health)
+}
+
+fn wait_for_proxy_health(timeout: Duration, mut check: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if check() {
+            return true;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(200).min(remaining));
+    }
 }
 
 fn loopback_proxy_address() -> SocketAddr {
@@ -458,8 +473,14 @@ fn current_uid() -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{launch_agent_plist, xml_escape};
-    use std::path::Path;
+    use super::{
+        launch_agent_plist, parse_proxy_health_response, wait_for_proxy_health, xml_escape,
+    };
+    use serde_json::json;
+    use std::{
+        path::Path,
+        time::{Duration, Instant},
+    };
 
     #[test]
     fn launch_agent_arguments_are_fixed_and_xml_escaped() {
@@ -477,5 +498,33 @@ mod tests {
     #[test]
     fn xml_escape_covers_attribute_and_text_delimiters() {
         assert_eq!(xml_escape("a<&\"'"), "a&lt;&amp;&quot;&apos;");
+    }
+
+    #[test]
+    fn proxy_health_requires_http_200_and_the_indesign_identity() {
+        let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"bridge\":\"indesign\",\"pluginConnected\":false}";
+        assert_eq!(
+            parse_proxy_health_response(response),
+            Some(json!({"bridge":"indesign","pluginConnected":false}))
+        );
+        assert!(parse_proxy_health_response(
+            "HTTP/1.1 503 Unavailable\r\nContent-Type: application/json\r\n\r\n{\"bridge\":\"indesign\"}"
+        )
+        .is_none());
+        assert!(parse_proxy_health_response(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"bridge\":\"illustrator\"}"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn proxy_start_wait_accepts_a_late_health_response_and_times_out() {
+        let started = Instant::now();
+        assert!(wait_for_proxy_health(Duration::from_secs(4), || {
+            started.elapsed() >= Duration::from_millis(3_100)
+        }));
+        assert!(started.elapsed() >= Duration::from_millis(3_100));
+
+        assert!(!wait_for_proxy_health(Duration::from_millis(30), || false));
     }
 }

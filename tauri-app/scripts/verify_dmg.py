@@ -102,9 +102,21 @@ def verify_dmg(dmg: Path) -> None:
 
 
 def main() -> None:
-    images = sorted((APP_ROOT / "target/release/bundle/dmg").glob("Adobe AI Bridge_*_aarch64.dmg"))
+    config = json.loads(
+        (APP_ROOT / "apps/desktop/src-tauri/tauri.conf.json").read_text(encoding="utf-8")
+    )
+    version = config.get("version")
+    if not isinstance(version, str):
+        raise SystemExit("The Tauri config does not define a string app version.")
+    images = sorted(
+        (APP_ROOT / "target/release/bundle/dmg").glob(
+            f"Adobe AI Bridge_{version}_aarch64.dmg"
+        )
+    )
     if len(images) != 1:
-        raise SystemExit("Expected exactly one Apple Silicon Adobe AI Bridge DMG in the release output directory.")
+        raise SystemExit(
+            f"Expected exactly one Apple Silicon Adobe AI Bridge {version} DMG in the release output directory."
+        )
     verify_dmg(images[0])
 
 

@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     diagnostics::application_support_dir,
-    model::{ActionResult, BridgeId},
+    model::{ActionResult, BridgeId, InstallReport},
 };
 
 #[derive(Debug, Deserialize)]
@@ -23,10 +23,14 @@ struct BundleManifest {
 }
 
 #[must_use]
-pub fn install_all_bridges(resource_dir: &Path) -> ActionResult {
+pub fn install_all_bridges(resource_dir: &Path) -> InstallReport {
     let stopped = crate::service::stop_indesign_proxy();
     if !stopped.ok {
-        return stopped;
+        return InstallReport {
+            installed_bridges: Vec::new(),
+            runtime_result: stopped,
+            proxy_result: None,
+        };
     }
 
     let install_result = (|| {
@@ -36,7 +40,7 @@ pub fn install_all_bridges(resource_dir: &Path) -> ActionResult {
         let mut failures = Vec::new();
         for bridge in [BridgeId::Illustrator, BridgeId::Indesign] {
             match install_bundle(bridge, resource_dir) {
-                Ok(path) => installed.push(format!("{} {}", bridge.label(), path.version)),
+                Ok(path) => installed.push((bridge, path.version)),
                 Err(error) => failures.push(format!("{}: {error}", bridge.label())),
             }
         }
@@ -45,32 +49,50 @@ pub fn install_all_bridges(resource_dir: &Path) -> ActionResult {
 
     let proxy_result = crate::service::start_indesign_proxy();
     match install_result {
-        Ok((installed, mut failures)) => {
-            if !proxy_result.ok {
-                failures.push(format!("InDesign proxy: {}", proxy_result.message));
-            }
-            if failures.is_empty() {
+        Ok((installed, failures)) => {
+            let runtime_result = if failures.is_empty() {
                 ActionResult::success(
                     "BRIDGES_INSTALLED",
-                    format!("Installed {} and {}.", installed[0], installed[1]),
-                    "Select the InDesign panel setup link if needed, then restart or reload the selected clients to load the full tool lists.",
+                    format!(
+                        "Installed {}.",
+                        installed
+                            .iter()
+                            .map(|(bridge, version)| format!("{} {version}", bridge.label()))
+                            .collect::<Vec<_>>()
+                            .join(" and ")
+                    ),
+                    "Restart or reload the selected clients to load the full tool lists.",
                 )
             } else {
                 ActionResult::failure(
                     "BRIDGE_INSTALL_INCOMPLETE",
-                    format!("Installed: {}. Issues: {}", installed.join(", "), failures.join("; ")),
-                    "Run Install / Update again after correcting the reported issue. The manager keeps only the current runtime version.",
+                    format!(
+                        "Installed: {}. Issues: {}",
+                        installed
+                            .iter()
+                            .map(|(bridge, version)| format!("{} {version}", bridge.label()))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        failures.join("; ")
+                    ),
+                    "Run Install / Update again after correcting the reported runtime issue.",
                 )
+            };
+            InstallReport {
+                installed_bridges: installed.into_iter().map(|(bridge, _)| bridge).collect(),
+                runtime_result,
+                proxy_result: Some(proxy_result),
             }
         }
-        Err(error) => ActionResult::failure(
-            "BRIDGE_INSTALL_FAILED",
-            format!(
-                "The shared runtime could not be installed: {error}. Proxy status: {}",
-                proxy_result.message
+        Err(error) => InstallReport {
+            installed_bridges: Vec::new(),
+            runtime_result: ActionResult::failure(
+                "BRIDGE_INSTALL_FAILED",
+                format!("The shared runtime could not be installed: {error}"),
+                "Run Install / Update again after correcting the reported runtime issue.",
             ),
-            "Run Install / Update again after correcting the reported issue.",
-        ),
+            proxy_result: Some(proxy_result),
+        },
     }
 }
 
