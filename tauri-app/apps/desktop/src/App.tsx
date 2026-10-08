@@ -9,25 +9,26 @@ import {
 } from "@adobe-ai-bridge/client-config";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
+import {
+  detectSystemLocale,
+  formatTemplate,
+  localizeActionResult,
+  localizeLayerDetail,
+  localizedClientDetail,
+  readLanguagePreference,
+  saveLanguagePreference,
+  strings,
+} from "./i18n";
+import type { LanguagePreference, Locale, UiStrings } from "./i18n";
 import type {
   ActionResult,
   BridgeInstallResult,
   BridgeStatus,
-  CheckState,
   ClientConfigDocument,
   ClientStatus,
   Dashboard,
   LayerStatus,
 } from "./types";
-
-const stateLabels: Record<CheckState, string> = {
-  not_installed: "Not detected",
-  installed_not_running: "Ready to configure",
-  waiting_for_plugin: "Waiting for plugin",
-  connected: "Connected",
-  degraded: "Needs verification",
-  error: "Error",
-};
 
 function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -79,18 +80,32 @@ function previewDashboard(): Dashboard {
   };
 }
 
-function LayerCard({ title, status }: { title: string; status: LayerStatus }) {
+function LayerCard({
+  title,
+  status,
+  locale,
+  copy,
+  bridge,
+}: {
+  title: string;
+  status: LayerStatus;
+  locale: Locale;
+  copy: UiStrings;
+  bridge?: BridgeId;
+}) {
   const timestamp = status.lastVerified
-    ? new Date(status.lastVerified).toLocaleTimeString()
-    : "Not verified";
+    ? new Date(status.lastVerified).toLocaleTimeString(locale)
+    : copy.notVerified;
   return (
     <article className={`layer-card state-${status.state}`}>
       <div className="layer-title-row">
         <h3>{title}</h3>
-        <span className="state-label">{stateLabels[status.state]}</span>
+        <span className="state-label">{copy.stateLabels[status.state]}</span>
       </div>
-      <p>{status.detail}</p>
-      <span className="verification-time">Last verified · {timestamp}</span>
+      <p>{localizeLayerDetail(status.detail, locale, bridge)}</p>
+      <span className="verification-time">
+        {copy.lastVerified} · {timestamp}
+      </span>
     </article>
   );
 }
@@ -102,6 +117,8 @@ function BridgeCard({
   onOpenPlugin,
   onProxyAction,
   onRuntimeAction,
+  locale,
+  copy,
 }: {
   bridge: BridgeStatus;
   busy: string | null;
@@ -109,6 +126,8 @@ function BridgeCard({
   onOpenPlugin: () => void;
   onProxyAction: (action: "start" | "stop" | "copy-token") => void;
   onRuntimeAction: (action: "rollback" | "uninstall", bridge: BridgeId) => void;
+  locale: Locale;
+  copy: UiStrings;
 }) {
   const runtimeInstalled = bridge.runtime.state !== "not_installed";
   return (
@@ -116,13 +135,13 @@ function BridgeCard({
       <div className="bridge-panel-heading">
         <div>
           <div className="eyebrow">
-            {bridge.id === "illustrator" ? "VECTOR DESIGN" : "PAGE LAYOUT"}
+            {bridge.id === "illustrator" ? copy.vectorDesign : copy.pageLayout}
           </div>
           <h2 id={`${bridge.id}-heading`}>{bridge.name}</h2>
           <p className="bridge-version">
             {bridge.version
-              ? `Runtime ${bridge.version}`
-              : "Runtime not installed"}
+              ? `${copy.runtime} ${bridge.version}`
+              : copy.runtimeNotInstalled}
           </p>
         </div>
         <div className="bridge-actions">
@@ -133,10 +152,10 @@ function BridgeCard({
             onClick={() => onInstall(bridge.id)}
           >
             {busy === `install-${bridge.id}`
-              ? "Installing…"
+              ? copy.installing
               : runtimeInstalled
-                ? "Update runtime"
-                : "Install runtime"}
+                ? copy.updateRuntime
+                : copy.installRuntime}
           </button>
           <button
             type="button"
@@ -145,8 +164,8 @@ function BridgeCard({
             onClick={() => onRuntimeAction("rollback", bridge.id)}
           >
             {busy === `runtime-rollback-${bridge.id}`
-              ? "Rolling back…"
-              : "Rollback runtime"}
+              ? copy.rollingBack
+              : copy.rollbackRuntime}
           </button>
           <button
             type="button"
@@ -155,8 +174,8 @@ function BridgeCard({
             onClick={() => onRuntimeAction("uninstall", bridge.id)}
           >
             {busy === `runtime-uninstall-${bridge.id}`
-              ? "Uninstalling…"
-              : "Uninstall runtime"}
+              ? copy.uninstalling
+              : copy.uninstallRuntime}
           </button>
           {bridge.id === "indesign" ? (
             <>
@@ -166,7 +185,7 @@ function BridgeCard({
                 disabled={busy !== null || !runtimeInstalled}
                 onClick={() => onProxyAction("start")}
               >
-                {busy === "proxy-start" ? "Starting…" : "Start proxy"}
+                {busy === "proxy-start" ? copy.starting : copy.startProxy}
               </button>
               <button
                 type="button"
@@ -174,7 +193,7 @@ function BridgeCard({
                 disabled={busy !== null || !runtimeInstalled}
                 onClick={() => onProxyAction("stop")}
               >
-                {busy === "proxy-stop" ? "Stopping…" : "Stop proxy"}
+                {busy === "proxy-stop" ? copy.stopping : copy.stopProxy}
               </button>
               <button
                 type="button"
@@ -182,7 +201,7 @@ function BridgeCard({
                 disabled={busy !== null || !runtimeInstalled}
                 onClick={() => onProxyAction("copy-token")}
               >
-                Copy UXP token
+                {copy.copyUxpToken}
               </button>
               <button
                 type="button"
@@ -190,33 +209,60 @@ function BridgeCard({
                 disabled={busy !== null || !runtimeInstalled}
                 onClick={onOpenPlugin}
               >
-                Open UXP installer
+                {copy.openUxpInstaller}
               </button>
             </>
           ) : null}
         </div>
       </div>
       <div className="connection-grid bridge-grid">
-        <LayerCard title="Adobe application" status={bridge.application} />
-        <LayerCard title="Managed runtime" status={bridge.runtime} />
         <LayerCard
-          title={bridge.id === "indesign" ? "Loopback proxy" : "Client process"}
-          status={bridge.service}
+          title={copy.adobeApplication}
+          status={bridge.application}
+          locale={locale}
+          copy={copy}
+          bridge={bridge.id}
+        />
+        <LayerCard
+          title={copy.managedRuntime}
+          status={bridge.runtime}
+          locale={locale}
+          copy={copy}
+          bridge={bridge.id}
         />
         <LayerCard
           title={
-            bridge.id === "indesign" ? "UXP panel" : "Automation permission"
+            bridge.id === "indesign" ? copy.loopbackProxy : copy.clientProcess
+          }
+          status={bridge.service}
+          locale={locale}
+          copy={copy}
+          bridge={bridge.id}
+        />
+        <LayerCard
+          title={
+            bridge.id === "indesign" ? copy.uxpPanel : copy.automationPermission
           }
           status={bridge.extension}
+          locale={locale}
+          copy={copy}
+          bridge={bridge.id}
         />
-        <LayerCard title="MCP read check" status={bridge.mcp} />
+        <LayerCard
+          title={copy.mcpReadCheck}
+          status={bridge.mcp}
+          locale={locale}
+          copy={copy}
+          bridge={bridge.id}
+        />
       </div>
     </section>
   );
 }
 
-function clientLabel(id: ClientId): string {
-  return id === "opencode" ? "OpenCode" : "Tencent WorkBuddy";
+function clientLabel(id: ClientId, locale: Locale): string {
+  if (id === "opencode") return "OpenCode";
+  return locale === "zh-CN" ? "腾讯 WorkBuddy" : "Tencent WorkBuddy";
 }
 
 export function App() {
@@ -224,6 +270,12 @@ export function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<ActionResult | null>(null);
   const [isNative, setIsNative] = useState(isTauri);
+  const [languagePreference, setLanguagePreference] =
+    useState<LanguagePreference>(readLanguagePreference);
+  const [systemLocale, setSystemLocale] = useState<Locale>(detectSystemLocale);
+  const locale =
+    languagePreference === "system" ? systemLocale : languagePreference;
+  const copy = strings[locale];
   const [selectedClient, setSelectedClient] = useState<ClientId>("opencode");
   const [selectedBridge, setSelectedBridge] = useState<BridgeId>("illustrator");
   const [preview, setPreview] = useState<ConfigPreview | null>(null);
@@ -249,6 +301,22 @@ export function App() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    const updateSystemLocale = () => setSystemLocale(detectSystemLocale());
+    document.documentElement.lang = locale;
+    window.addEventListener("languagechange", updateSystemLocale);
+    return () =>
+      window.removeEventListener("languagechange", updateSystemLocale);
+  }, [locale]);
+
+  useEffect(() => {
+    saveLanguagePreference(languagePreference);
+  }, [languagePreference]);
+
+  const displayNotice = notice
+    ? localizeActionResult(notice, locale, copy)
+    : null;
 
   const install = async (bridge: BridgeId) => {
     setBusy(`install-${bridge}`);
@@ -327,7 +395,9 @@ export function App() {
     if (
       action === "uninstall" &&
       !window.confirm(
-        `Uninstall the ${bridgeLabel(bridge)} runtime? Client configuration entries will be preserved.`,
+        formatTemplate(copy.uninstallConfirm, {
+          bridge: bridgeLabel(bridge),
+        }),
       )
     ) {
       return;
@@ -379,7 +449,15 @@ export function App() {
       setPreview(result);
       setNotice({
         ok: !result.conflict,
-        code: result.conflict ? "CONFIG_CONFLICT" : "CONFIG_PREVIEW_READY",
+        code: result.conflict
+          ? "CONFIG_CONFLICT"
+          : result.alreadyConfigured
+            ? action === "install"
+              ? "CONFIG_ENTRY_ALREADY_PRESENT"
+              : "CONFIG_ENTRY_ALREADY_ABSENT"
+            : action === "install"
+              ? "CONFIG_PREVIEW_INSTALL_READY"
+              : "CONFIG_PREVIEW_REMOVE_READY",
         message: result.conflict
           ? "A different server already uses this bridge name."
           : result.alreadyConfigured
@@ -455,11 +533,7 @@ export function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <a
-          className="wordmark"
-          href="#dashboard"
-          aria-label="Adobe AI Bridge home"
-        >
+        <a className="wordmark" href="#dashboard" aria-label={copy.homeLabel}>
           <span className="wordmark-mark" aria-hidden="true">
             AB
           </span>
@@ -467,50 +541,71 @@ export function App() {
             Adobe <strong>AI Bridge</strong>
           </span>
         </a>
-        <span className="app-version">
-          Manager {dashboard.appVersion} · {dashboard.architecture}
-        </span>
+        <div className="topbar-meta">
+          <span className="app-version">
+            {copy.manager} {dashboard.appVersion} · {dashboard.architecture}
+          </span>
+          <label className="language-control">
+            <span>{copy.language}</span>
+            <select
+              aria-label={copy.language}
+              value={languagePreference}
+              onChange={(event) =>
+                setLanguagePreference(event.target.value as LanguagePreference)
+              }
+            >
+              <option value="system">
+                {copy.followSystem} (
+                {systemLocale === "zh-CN"
+                  ? copy.simplifiedChinese
+                  : copy.english}
+                )
+              </option>
+              <option value="en">{copy.english}</option>
+              <option value="zh-CN">{copy.simplifiedChinese}</option>
+            </select>
+          </label>
+        </div>
       </header>
 
       <section className="page-heading" id="dashboard">
-        <div className="eyebrow">LOCAL ADOBE CONNECTION MANAGER</div>
-        <h1>Two bridges. One place to manage them.</h1>
-        <p>
-          Install either engine independently, connect both AI clients, and
-          verify each layer before using a document tool.
-        </p>
+        <div className="eyebrow">{copy.localAdobeManager}</div>
+        <h1>{copy.pageTitle}</h1>
+        <p>{copy.pageIntro}</p>
       </section>
 
-      {notice ? (
+      {displayNotice ? (
         <aside
-          className={`notice ${notice.ok ? "notice-success" : "notice-error"}`}
+          className={`notice ${
+            displayNotice.ok ? "notice-success" : "notice-error"
+          }`}
           role="status"
           aria-live="polite"
         >
-          <div className="notice-heading">{notice.message}</div>
-          <div>{notice.recovery}</div>
+          <div className="notice-heading">{displayNotice.message}</div>
+          <div>{displayNotice.recovery}</div>
         </aside>
       ) : null}
       {!isNative ? (
         <aside className="notice notice-warning" role="status">
-          Browser preview mode. Local app detection, installation and client
-          configuration are available in the desktop app.
+          {copy.previewOnly}
         </aside>
       ) : null}
 
       <section className="section-block">
         <div className="section-title-row">
           <div>
-            <div className="eyebrow">INDEPENDENT ENGINE STATUS</div>
-            <h2>Adobe applications</h2>
+            <div className="eyebrow">{copy.independentEngineStatus}</div>
+            <h2>{copy.adobeApplications}</h2>
           </div>
           <button
             type="button"
             className="button button-quiet"
             onClick={() => void refresh()}
-            aria-label="Refresh diagnostics"
+            aria-label={copy.refreshDiagnostics}
           >
-            Refresh · {new Date(dashboard.lastChecked).toLocaleTimeString()}
+            {copy.refresh} ·{" "}
+            {new Date(dashboard.lastChecked).toLocaleTimeString(locale)}
           </button>
         </div>
         <div className="bridge-stack">
@@ -525,6 +620,8 @@ export function App() {
               onRuntimeAction={(action, id) =>
                 void runRuntimeAction(action, id)
               }
+              locale={locale}
+              copy={copy}
             />
           ))}
         </div>
@@ -533,21 +630,24 @@ export function App() {
       <section className="section-block clients-section">
         <div className="section-title-row">
           <div>
-            <div className="eyebrow">FOUR SEPARATE MCP CONNECTIONS</div>
-            <h2>OpenCode and Tencent WorkBuddy</h2>
+            <div className="eyebrow">{copy.fourConnections}</div>
+            <h2>{copy.clientHeading}</h2>
           </div>
-          <p>
-            Each client gets a distinct server entry for each Adobe application.
-          </p>
+          <p>{copy.clientIntro}</p>
         </div>
         <div className="connection-grid client-grid">
           {dashboard.clients.map((client) => (
-            <ClientCard key={client.id} client={client} />
+            <ClientCard
+              key={client.id}
+              client={client}
+              locale={locale}
+              copy={copy}
+            />
           ))}
         </div>
         <div className="config-controls">
           <label>
-            AI client
+            {copy.aiClient}
             <select
               value={selectedClient}
               onChange={(event) => {
@@ -556,11 +656,13 @@ export function App() {
               }}
             >
               <option value="opencode">OpenCode</option>
-              <option value="workbuddy">Tencent WorkBuddy</option>
+              <option value="workbuddy">
+                {locale === "zh-CN" ? "腾讯 WorkBuddy" : "Tencent WorkBuddy"}
+              </option>
             </select>
           </label>
           <label>
-            Adobe bridge
+            {copy.adobeBridge}
             <select
               value={selectedBridge}
               onChange={(event) => {
@@ -568,8 +670,8 @@ export function App() {
                 setPreview(null);
               }}
             >
-              <option value="illustrator">Illustrator MCP</option>
-              <option value="indesign">InDesign MCP</option>
+              <option value="illustrator">{copy.illustratorMcp}</option>
+              <option value="indesign">{copy.indesignMcp}</option>
             </select>
           </label>
           <button
@@ -579,8 +681,8 @@ export function App() {
             onClick={() => void previewConfig()}
           >
             {busy === "preview-config"
-              ? "Preparing preview…"
-              : "Preview install"}
+              ? copy.preparingPreview
+              : copy.previewInstall}
           </button>
           <button
             type="button"
@@ -589,29 +691,30 @@ export function App() {
             onClick={() => void previewConfig("remove")}
           >
             {busy === "preview-config"
-              ? "Preparing preview…"
-              : "Preview removal"}
+              ? copy.preparingPreview
+              : copy.previewRemoval}
           </button>
         </div>
         {preview ? (
           <article className="preview-card" aria-live="polite">
             <div className="layer-title-row">
               <h3>
-                {clientLabel(preview.client)} · {preview.bridge} MCP
+                {clientLabel(preview.client, locale)} ·{" "}
+                {bridgeLabel(preview.bridge)} MCP
               </h3>
               <span className="state-label">{preview.schema}</span>
             </div>
             <p>{preview.configPath}</p>
             <p>
               {preview.conflict
-                ? "Existing entry preserved because it differs from the manager-owned value."
+                ? copy.existingEntryPreserved
                 : preview.alreadyConfigured
                   ? preview.action === "install"
-                    ? "No file changes are required."
-                    : "The selected bridge entry is already absent."
+                    ? copy.noFileChanges
+                    : copy.selectedEntryAbsent
                   : preview.action === "install"
-                    ? "Only the selected Adobe AI Bridge entry will be added. Existing client settings remain in place."
-                    : "Only the selected Adobe AI Bridge entry will be removed. The current file will be backed up first."}
+                    ? copy.entryWillBeAdded
+                    : copy.entryWillBeRemoved}
             </p>
             {!preview.conflict && !preview.alreadyConfigured ? (
               <button
@@ -621,10 +724,10 @@ export function App() {
                 onClick={() => void applyConfig()}
               >
                 {busy === "apply-config"
-                  ? "Applying safely…"
+                  ? copy.applyingSafely
                   : preview.action === "install"
-                    ? "Apply this entry"
-                    : "Remove this entry"}
+                    ? copy.applyEntry
+                    : copy.removeEntry}
               </button>
             ) : null}
           </article>
@@ -632,27 +735,33 @@ export function App() {
       </section>
 
       <footer className="footer-row">
-        <span>
-          Local manager · document content is not included in diagnostics
-        </span>
-        <span>
-          Checks are dated and separated from real application verification
-        </span>
+        <span>{copy.localManagerFooter}</span>
+        <span>{copy.verificationFooter}</span>
       </footer>
     </main>
   );
 }
 
-function ClientCard({ client }: { client: ClientStatus }) {
+function ClientCard({
+  client,
+  locale,
+  copy,
+}: {
+  client: ClientStatus;
+  locale: Locale;
+  copy: UiStrings;
+}) {
   return (
     <article className={`layer-card state-${client.state}`}>
       <div className="layer-title-row">
-        <h3>{client.name}</h3>
-        <span className="state-label">{stateLabels[client.state]}</span>
+        <h3>{clientLabel(client.id as ClientId, locale)}</h3>
+        <span className="state-label">{copy.stateLabels[client.state]}</span>
       </div>
-      <p>{client.detail}</p>
+      <p>
+        {localizedClientDetail(client.detail, locale, client.id as ClientId)}
+      </p>
       <span className="verification-time">
-        {client.schema ?? "No schema detected"}
+        {client.schema ?? copy.noSchema}
         {client.configPath ? ` · ${client.configPath}` : ""}
       </span>
     </article>

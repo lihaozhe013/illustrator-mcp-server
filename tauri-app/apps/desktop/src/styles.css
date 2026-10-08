@@ -64,6 +64,29 @@ button {
   color: #7d8580;
   font-size: 11px;
 }
+.topbar-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.language-control {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #69766e;
+  font-size: 10px;
+  font-weight: 600;
+}
+.language-control select {
+  height: 30px;
+  border: 1px solid #dcd8cf;
+  border-radius: 7px;
+  padding: 0 8px;
+  color: #33413a;
+  background: #fbfaf8;
+  font: inherit;
+  font-weight: 500;
+}
 .page-heading {
   padding: 48px 0 24px;
 }
@@ -315,5 +338,19 @@ h2 {
   .footer-row {
     flex-direction: column;
     gap: 8px;
+  }
+  .topbar {
+    gap: 12px;
+  }
+  .topbar-meta {
+    align-items: end;
+    flex-direction: column-reverse;
+    gap: 5px;
+  }
+  .language-control > span {
+    display: none;
+  }
+  .language-control select {
+    max-width: 155px;
   }
 }
