@@ -25,8 +25,10 @@ impl From<ClientId> for adobe_ai_bridge_core::clients::ClientId {
 }
 
 #[tauri::command]
-fn get_dashboard_command() -> adobe_ai_bridge_core::Dashboard {
-    get_dashboard()
+async fn get_dashboard_command() -> Result<adobe_ai_bridge_core::Dashboard, String> {
+    tauri::async_runtime::spawn_blocking(get_dashboard)
+        .await
+        .map_err(|error| format!("dashboard discovery task failed: {error}"))
 }
 
 #[tauri::command]

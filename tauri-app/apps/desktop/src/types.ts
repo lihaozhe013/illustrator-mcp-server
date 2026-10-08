@@ -15,10 +15,18 @@ export type LayerStatus = {
   lastVerified: string | null;
 };
 
+export type AdobeApplication = {
+  path: string;
+  bundleId: string;
+  displayName: string;
+  version: string | null;
+};
+
 export type BridgeStatus = {
   id: BridgeId;
   name: string;
   application: LayerStatus;
+  applications: AdobeApplication[];
   runtime: LayerStatus;
   service: LayerStatus;
   extension: LayerStatus;

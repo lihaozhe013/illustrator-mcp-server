@@ -36,9 +36,10 @@ def verify_manifest(resource_root: Path, manifest_name: str, expected_id: str | 
 
 
 def verify_arm64(path: Path) -> None:
-    architectures = run(["/usr/bin/lipo", "-archs", str(path)]).split()
-    if architectures != ["arm64"]:
-        raise SystemExit(f"Expected an arm64-only binary at {path}; got {architectures}.")
+    description = run(["/usr/bin/file", "-b", str(path)]).strip()
+    details = description.split()
+    if not description.startswith("Mach-O ") or "arm64" not in details or "universal" in details:
+        raise SystemExit(f"Expected a thin arm64 binary at {path}; got {description}.")
 
 
 def verify_dmg(dmg: Path) -> None:

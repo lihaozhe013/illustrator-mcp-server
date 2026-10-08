@@ -1,3 +1,4 @@
+pub mod adobe_apps;
 pub mod clients;
 pub mod diagnostics;
 pub mod install;

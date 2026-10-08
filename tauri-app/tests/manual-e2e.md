@@ -1,6 +1,6 @@
 # Manual Adobe and Client E2E Checklist
 
-Status on 2026-10-08: `BLOCKED` for real Adobe operations and client handshakes. Both Adobe apps and both clients are detected on the development Mac, but no UXP approval, real document operation, or manager registration test has been performed. Do not treat mock tests as completion evidence.
+Status on 2026-10-08: `BLOCKED` for real Adobe operations and client handshakes. The running manager detected Illustrator 30.3.0 and InDesign 21.0.0.192 with their full bundle paths, and both installed-version lists were inspected. No UXP approval, real document operation, or manager registration test has been performed. Do not treat mock tests as completion evidence.
 
 On each supported clean Apple Silicon user account, record macOS, Illustrator, InDesign, Creative Cloud, WorkBuddy, OpenCode, manager, and runtime versions.
 

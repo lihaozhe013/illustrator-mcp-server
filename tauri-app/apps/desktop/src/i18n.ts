@@ -86,7 +86,16 @@ const en = {
     "Checks are dated and separated from real application verification",
   uninstallConfirm:
     "Uninstall the {bridge} runtime? Client configuration entries will be preserved.",
+  applicationVersion: "Version {version}",
+  versionUnavailable: "Version unavailable",
+  allInstalledVersions: "All installed versions ({count})",
   detectedAt: "Detected at {path} (version {version}).",
+  detectedApplicationCount:
+    "Detected {count} installed application version(s).",
+  noAdobeApplications:
+    "No supported Adobe application was found in standard locations, macOS registration or Spotlight.",
+  incompleteAdobeSearch:
+    "The Adobe application search was incomplete; some search sources did not respond.",
   missingAdobeApp: "{app} was not found in /Applications.",
   actionFailed: "The action could not be completed.",
   actionFailedRecovery:
@@ -406,7 +415,16 @@ const zh: { [K in keyof Copy]: Copy[K] } = {
   localManagerFooter: "本机管理器 · 诊断信息不包含文档内容",
   verificationFooter: "检查记录带有时间戳，并与真实应用验证结果区分开",
   uninstallConfirm: "确定卸载 {bridge} 运行时吗？客户端配置条目会保留。",
+  applicationVersion: "Version {version}",
+  versionUnavailable: "Version unavailable",
+  allInstalledVersions: "All installed versions ({count})",
   detectedAt: "检测位置：{path}（版本 {version}）。",
+  detectedApplicationCount:
+    "Detected {count} installed application version(s).",
+  noAdobeApplications:
+    "No supported Adobe application was found in standard locations, macOS registration or Spotlight.",
+  incompleteAdobeSearch:
+    "The Adobe application search was incomplete; some search sources did not respond.",
   missingAdobeApp: "在 /Applications 中未找到 {app}。",
   actionFailed: "操作未能完成。",
   actionFailedRecovery: "请查看诊断信息后重试。参考代码：{code}。",
@@ -707,6 +725,25 @@ export function localizeLayerDetail(
   };
   const translated = known[detail];
   if (translated) return translated;
+  const countDetected =
+    /^Detected (\d+) installed application version\(s\)\.$/.exec(detail);
+  if (countDetected?.[1]) {
+    return formatTemplate(strings["zh-CN"].detectedApplicationCount, {
+      count: countDetected[1],
+    });
+  }
+  if (
+    detail ===
+    "No supported Adobe application was found in standard locations, macOS registration or Spotlight."
+  ) {
+    return strings["zh-CN"].noAdobeApplications;
+  }
+  if (
+    detail ===
+    "The Adobe application search was incomplete; some search sources did not respond."
+  ) {
+    return strings["zh-CN"].incompleteAdobeSearch;
+  }
   const detected = /^Detected at (.+) \(version (.+)\)\.$/.exec(detail);
   if (detected?.[1] && detected[2]) {
     return formatTemplate(strings["zh-CN"].detectedAt, {

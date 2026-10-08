@@ -9,19 +9,20 @@ import {
 } from "@adobe-ai-bridge/client-config";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
+import type { LanguagePreference, Locale, UiStrings } from "./i18n";
 import {
   detectSystemLocale,
   formatTemplate,
   localizeActionResult,
-  localizeLayerDetail,
   localizedClientDetail,
+  localizeLayerDetail,
   readLanguagePreference,
   saveLanguagePreference,
   strings,
 } from "./i18n";
-import type { LanguagePreference, Locale, UiStrings } from "./i18n";
 import type {
   ActionResult,
+  AdobeApplication,
   BridgeInstallResult,
   BridgeStatus,
   ClientConfigDocument,
@@ -54,6 +55,7 @@ function previewDashboard(): Dashboard {
       service: status,
       extension: status,
       mcp: status,
+      applications: [],
       version: null,
     })),
     clients: [
@@ -103,6 +105,73 @@ function LayerCard({
         <span className="state-label">{copy.stateLabels[status.state]}</span>
       </div>
       <p>{localizeLayerDetail(status.detail, locale, bridge)}</p>
+      <span className="verification-time">
+        {copy.lastVerified} · {timestamp}
+      </span>
+    </article>
+  );
+}
+
+function AdobeApplicationCard({
+  bridge,
+  locale,
+  copy,
+}: {
+  bridge: BridgeStatus;
+  locale: Locale;
+  copy: UiStrings;
+}) {
+  const newest = bridge.applications[0];
+  const timestamp = bridge.application.lastVerified
+    ? new Date(bridge.application.lastVerified).toLocaleTimeString(locale)
+    : copy.notVerified;
+
+  return (
+    <article className={`layer-card state-${bridge.application.state}`}>
+      <div className="layer-title-row">
+        <h3>{copy.adobeApplication}</h3>
+        <span className="state-label">
+          {copy.stateLabels[bridge.application.state]}
+        </span>
+      </div>
+      <p>{localizeLayerDetail(bridge.application.detail, locale, bridge.id)}</p>
+      {newest ? (
+        <div className="latest-adobe-app">
+          <strong>
+            {newest.displayName}
+            {newest.version
+              ? ` · ${formatTemplate(copy.applicationVersion, {
+                  version: newest.version,
+                })}`
+              : ` · ${copy.versionUnavailable}`}
+          </strong>
+          <code>{newest.path}</code>
+        </div>
+      ) : null}
+      {bridge.applications.length > 0 ? (
+        <details className="adobe-app-list">
+          <summary>
+            {formatTemplate(copy.allInstalledVersions, {
+              count: String(bridge.applications.length),
+            })}
+          </summary>
+          <ul>
+            {bridge.applications.map((application: AdobeApplication) => (
+              <li key={application.path}>
+                <strong>
+                  {application.displayName}
+                  {application.version
+                    ? ` · ${formatTemplate(copy.applicationVersion, {
+                        version: application.version,
+                      })}`
+                    : ` · ${copy.versionUnavailable}`}
+                </strong>
+                <code>{application.path}</code>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
       <span className="verification-time">
         {copy.lastVerified} · {timestamp}
       </span>
@@ -216,13 +285,7 @@ function BridgeCard({
         </div>
       </div>
       <div className="connection-grid bridge-grid">
-        <LayerCard
-          title={copy.adobeApplication}
-          status={bridge.application}
-          locale={locale}
-          copy={copy}
-          bridge={bridge.id}
-        />
+        <AdobeApplicationCard bridge={bridge} locale={locale} copy={copy} />
         <LayerCard
           title={copy.managedRuntime}
           status={bridge.runtime}

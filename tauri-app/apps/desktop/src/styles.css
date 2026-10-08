@@ -219,6 +219,41 @@ h2 {
 .verification-time {
   font-size: 9px;
 }
+.latest-adobe-app {
+  display: grid;
+  gap: 5px;
+  margin: 0 0 10px;
+  color: #4e5a53;
+  font-size: 10px;
+}
+.latest-adobe-app code,
+.adobe-app-list code {
+  overflow-wrap: anywhere;
+  color: #737c75;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+}
+.adobe-app-list {
+  margin: 0 0 10px;
+  color: #4e5a53;
+  font-size: 10px;
+}
+.adobe-app-list summary {
+  width: fit-content;
+  color: #315a4c;
+  cursor: pointer;
+  font-weight: 600;
+}
+.adobe-app-list ul {
+  display: grid;
+  gap: 8px;
+  margin: 9px 0;
+  padding: 0 0 0 15px;
+}
+.adobe-app-list li {
+  display: grid;
+  gap: 4px;
+}
 .clients-section {
   padding-top: 20px;
 }

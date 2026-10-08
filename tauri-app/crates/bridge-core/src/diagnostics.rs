@@ -6,9 +6,9 @@ use std::{
 };
 
 use chrono::Utc;
-use plist::Value as PlistValue;
 use serde::Deserialize;
 
+use crate::adobe_apps::{discover_adobe_applications, AdobeAppsReport};
 use crate::model::{BridgeId, BridgeStatus, CheckState, ClientStatus, Dashboard, LayerStatus};
 
 #[derive(Deserialize)]
@@ -22,9 +22,10 @@ struct ProxyHealth {
 #[must_use]
 pub fn get_dashboard() -> Dashboard {
     let support = application_support_dir();
+    let adobe_apps = discover_adobe_applications();
     let bridges = [BridgeId::Illustrator, BridgeId::Indesign]
         .into_iter()
-        .map(|bridge| diagnose_bridge(bridge, &support))
+        .map(|bridge| diagnose_bridge(bridge, &support, &adobe_apps))
         .collect();
     let clients = vec![diagnose_opencode(), diagnose_workbuddy()];
     Dashboard {
@@ -41,22 +42,9 @@ pub fn get_dashboard() -> Dashboard {
 }
 
 #[allow(clippy::too_many_lines)]
-fn diagnose_bridge(bridge: BridgeId, support: &Path) -> BridgeStatus {
-    let app = find_adobe_app(bridge);
-    let application = match app {
-        Some((path, version)) => LayerStatus::new(
-            CheckState::InstalledNotRunning,
-            format!(
-                "Detected at {} (version {}).",
-                path.display(),
-                version.unwrap_or_else(|| "unknown".to_owned())
-            ),
-        ),
-        None => LayerStatus::new(
-            CheckState::NotInstalled,
-            format!("{} was not found in /Applications.", bridge.label()),
-        ),
-    };
+fn diagnose_bridge(bridge: BridgeId, support: &Path, adobe_apps: &AdobeAppsReport) -> BridgeStatus {
+    let applications = adobe_apps.applications_for(bridge);
+    let application = adobe_application_status(bridge, adobe_apps, applications.len());
 
     let runtime_path = support
         .join("runtimes")
@@ -163,6 +151,7 @@ fn diagnose_bridge(bridge: BridgeId, support: &Path) -> BridgeStatus {
         id: bridge,
         name: bridge.label().to_owned(),
         application,
+        applications,
         runtime,
         service,
         extension,
@@ -171,31 +160,27 @@ fn diagnose_bridge(bridge: BridgeId, support: &Path) -> BridgeStatus {
     }
 }
 
-fn find_adobe_app(bridge: BridgeId) -> Option<(PathBuf, Option<String>)> {
-    let apps = std::fs::read_dir("/Applications").ok()?;
-    let needle = match bridge {
-        BridgeId::Illustrator => "Adobe Illustrator",
-        BridgeId::Indesign => "Adobe InDesign",
-    };
-    for entry in apps.flatten() {
-        let path = entry.path();
-        if !path.file_name()?.to_string_lossy().starts_with(needle)
-            || path.extension()?.to_string_lossy() != "app"
-        {
-            continue;
-        }
-        let version = PlistValue::from_file(path.join("Contents/Info.plist"))
-            .ok()
-            .and_then(|plist| plist.as_dictionary().cloned())
-            .and_then(|values| {
-                values
-                    .get("CFBundleShortVersionString")
-                    .and_then(PlistValue::as_string)
-                    .map(str::to_owned)
-            });
-        return Some((path, version));
+fn adobe_application_status(
+    bridge: BridgeId,
+    report: &AdobeAppsReport,
+    application_count: usize,
+) -> LayerStatus {
+    if report.is_installed(bridge) {
+        LayerStatus::new(
+            CheckState::InstalledNotRunning,
+            format!("Detected {application_count} installed application version(s)."),
+        )
+    } else if report.search_complete {
+        LayerStatus::new(
+            CheckState::NotInstalled,
+            "No supported Adobe application was found in standard locations, macOS registration or Spotlight.",
+        )
+    } else {
+        LayerStatus::new(
+            CheckState::Degraded,
+            "The Adobe application search was incomplete; some search sources did not respond.",
+        )
     }
-    None
 }
 
 fn proxy_health() -> Option<ProxyHealth> {
@@ -318,4 +303,55 @@ pub fn application_support_dir() -> PathBuf {
                 .join("Library/Application Support")
         })
         .join("AdobeAIBridge")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::adobe_application_status;
+    use crate::{
+        adobe_apps::{AdobeApplication, AdobeAppsReport},
+        model::{BridgeId, CheckState},
+    };
+
+    #[test]
+    fn application_status_distinguishes_missing_and_incomplete_searches() {
+        let missing = adobe_application_status(
+            BridgeId::Illustrator,
+            &AdobeAppsReport {
+                applications: Vec::new(),
+                search_complete: true,
+            },
+            0,
+        );
+        let incomplete = adobe_application_status(
+            BridgeId::Illustrator,
+            &AdobeAppsReport {
+                applications: Vec::new(),
+                search_complete: false,
+            },
+            0,
+        );
+        assert_eq!(missing.state, CheckState::NotInstalled);
+        assert_eq!(incomplete.state, CheckState::Degraded);
+    }
+
+    #[test]
+    fn partial_search_still_reports_an_application_that_was_found() {
+        let report = AdobeAppsReport {
+            applications: vec![AdobeApplication {
+                path: "/Applications/Adobe Illustrator.app".to_owned(),
+                bundle_id: "com.adobe.illustrator".to_owned(),
+                display_name: "Adobe Illustrator".to_owned(),
+                version: Some("30.3.0".to_owned()),
+            }],
+            search_complete: false,
+        };
+
+        let status = adobe_application_status(BridgeId::Illustrator, &report, 1);
+        assert_eq!(status.state, CheckState::InstalledNotRunning);
+        assert_eq!(
+            status.detail,
+            "Detected 1 installed application version(s)."
+        );
+    }
 }

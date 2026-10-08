@@ -2,7 +2,7 @@
 
 The supported target is macOS Apple Silicon (`aarch64-apple-darwin`). Build from `tauri-app/` with `pnpm install --frozen-lockfile`, `pnpm verify`, then `pnpm build:dmg`. The runtime builder downloads only checksum-pinned Node and upstream release inputs, stages and patches InDesign code, builds arm64 Python/Node resources, creates hash manifests, and asks Tauri to embed both engines in one DMG.
 
-On 2026-10-08 the runtime bundle build and Tauri DMG bundle completed locally. `pnpm verify:dmg` validated the DMG filesystem, 6,618 engine resource hashes, two shared Node runtime hashes, license files, and arm64 Mach-O binaries. The generated DMG is 93.11 MiB (96M on disk), unsigned, with SHA-256 `730d96584c4700148008cb2eaccabaa530002242d839a00949c3ae5c64a10665`. It is an engineering artifact; do not describe it as ready for clean-user installation.
+On 2026-10-08 `pnpm verify` passed. The runtime bundles and final Tauri app compiled locally. Tauri's default DMG step stopped at its Finder appearance AppleScript, so the generated `bundle_dmg.sh` was rerun with `--skip-jenkins` to produce the same app and runtime contents without Finder window customization. `pnpm verify:dmg` validated the filesystem, 6,618 engine resource hashes, two shared Node runtime hashes, license files, launcher, and arm64 Mach-O binaries. The generated DMG is 186.3 MiB (192M on disk), unsigned, with SHA-256 `4f7dd7b75d83f95c7968830807ce02b3f5b86858ea4aba601388d0cc8206548c`. The verifier uses the macOS `file` utility for architecture checks so it does not require accepting the Xcode license to run `lipo`. This remains an engineering artifact, not a clean-user release.
 
 Before a signed internal release:
 

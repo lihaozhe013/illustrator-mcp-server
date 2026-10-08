@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::adobe_apps::AdobeApplication;
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BridgeId {
@@ -26,7 +28,7 @@ impl BridgeId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckState {
     NotInstalled,
@@ -64,6 +66,7 @@ pub struct BridgeStatus {
     pub id: BridgeId,
     pub name: String,
     pub application: LayerStatus,
+    pub applications: Vec<AdobeApplication>,
     pub runtime: LayerStatus,
     pub service: LayerStatus,
     pub extension: LayerStatus,
