@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -122,7 +122,6 @@ test("reports plugin health without exposing session credentials or document dat
   assert.deepEqual(await response.json(), {
     bridge: "indesign",
     pluginConnected: true,
-    outcomeUnknown: false,
   });
   assert.equal(
     JSON.stringify(
@@ -164,41 +163,41 @@ test("rejects additional UXP panels and serializes protocol-compatible MCP opera
   assert.equal(maximumActive, 1);
 });
 
-test("persists unknown operation outcomes and refuses later commands", async () => {
-  const { stateDir, clientUrl, token } = await startProxy(() => undefined);
-  const first = emitCommand(clientUrl, token, "populateTemplate");
-  await new Promise((resolve) => setTimeout(resolve, 40));
-  const marker = JSON.parse(
-    await readFile(
-      path.join(stateDir, "indesign-operation-pending.json"),
-      "utf8",
-    ),
+test("reports an unknown timeout and accepts the next operation", async () => {
+  let commandCount = 0;
+  const { stateDir, clientUrl, token } = await startProxy(
+    async (message, socket) => {
+      commandCount += 1;
+      if (commandCount === 1) return;
+      socket.emit("command_packet_response", {
+        packet: {
+          senderId: message.senderId,
+          requestId: message.requestId,
+          status: "SUCCESS",
+          response: { completed: true },
+        },
+      });
+    },
   );
-  assert.equal(marker.action, "populateTemplate");
-  const result = await first;
+  const result = await emitCommand(clientUrl, token, "executeJsx");
   assert.equal(result.outcomeUnknown, true);
   assert.match(result.message, /outcome is unknown/i);
   const second = await emitCommand(clientUrl, token, "populateTemplate");
-  assert.equal(second.outcomeUnknown, true);
-  assert.equal(
-    JSON.parse(
-      await readFile(
-        path.join(stateDir, "indesign-operation-pending.json"),
-        "utf8",
-      ),
-    ).requestId,
-    marker.requestId,
+  assert.deepEqual(second.response, { completed: true });
+  assert.equal(commandCount, 2);
+  const markerExists = await access(
+    path.join(stateDir, "indesign-operation-pending.json"),
+  ).then(
+    () => true,
+    () => false,
   );
+  assert.equal(markerExists, false);
 });
 
-test("refuses to start with an unresolved operation from a previous proxy session", async () => {
+test("starts without consulting stale operation state", async () => {
   const stateDir = await mkdtemp(
     path.join(tmpdir(), "indesign-bridge-stale-test-"),
   );
-  const sentinel = path.join(stateDir, "indesign-operation-pending.json");
-  await writeFile(sentinel, JSON.stringify({ requestId: "old-operation" }), {
-    mode: 0o600,
-  });
   const token = randomBytes(48).toString("hex");
   const recovered = createBridgeProxy({ token, stateDir, port: 0 });
   await new Promise((resolve) =>
@@ -218,7 +217,7 @@ test("refuses to start with an unresolved operation from a previous proxy sessio
     token,
     "populateTemplate",
   );
-  assert.equal(result.outcomeUnknown, true);
-  assert.match(result.message, /previous document operation/);
+  assert.equal(result.status, "FAILURE");
+  assert.match(result.message, /plugin is not connected/i);
   client.close();
 });

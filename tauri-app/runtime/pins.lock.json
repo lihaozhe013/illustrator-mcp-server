@@ -4,7 +4,7 @@
     "repository": "https://github.com/ie3jp/illustrator-mcp-server",
     "snapshotCommit": "57c5c101a5192c61535493f39b653e6f92b8eb29",
     "packageVersion": "1.10.3",
-    "managerRuntimeVersion": "1.10.3-bridge.1",
+    "managerRuntimeVersion": "1.10.3-bridge.2",
     "license": "MIT",
     "runtimeDependencyLock": "runtime/locks/illustrator/package-lock.json",
     "runtimeDependencyAudit": "npm audit --omit=dev passed for the manager-owned patched lock on 2026-10-08"
@@ -30,8 +30,8 @@
       }
     },
     "managerPackage": {
-      "version": "1.2.1-bridge.1",
-      "sha256": "d859846acce5f3dfb4169509d2de3703b1ffedf1651a49a15c303c89178d9d67"
+      "version": "1.2.1-bridge.2",
+      "sha256": "55b3e1c6c802419444a17b3dfd71e85175d2b708204dd16b07943ce314a90bea"
     }
   },
   "adbProxy": {

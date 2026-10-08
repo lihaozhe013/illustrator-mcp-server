@@ -258,7 +258,7 @@ pub fn stop_indesign_proxy() -> ActionResult {
             return ActionResult::failure(
                 "INDESIGN_PROXY_OWNERSHIP_CONFLICT",
                 "Another proxy still answers on port 3001 after the managed LaunchAgent stopped.",
-                "The manager left its plist and runtime files in place; inspect the other service before uninstalling.",
+                "The manager left its plist and runtime files in place; inspect the other service before replacing the runtime.",
             );
         }
     }

@@ -57,7 +57,64 @@ def build() -> str:
     )
     files["index.html"] = html.encode("utf-8")
 
+    command_index = files["commands/index.js"].decode("utf-8")
+    command_index = patch_once(
+        command_index,
+        'const core = require("./core.js");',
+        'const bridgeJSX = require("./bridge_jsx.js");\nconst core = require("./core.js");',
+        "commands/index.js",
+    )
+    command_index = patch_once(
+        command_index,
+        "    ...geometryDocs.commandHandlers,\n",
+        "    ...geometryDocs.commandHandlers,\n    ...bridgeJSX.commandHandlers,\n",
+        "commands/index.js",
+    )
+    command_index = patch_once(
+        command_index,
+        '        "setActiveDocument", "listExportPresets", "debugEnums",\n',
+        '        "setActiveDocument", "listExportPresets", "debugEnums", "executeJsx",\n',
+        "commands/index.js JSX document precondition",
+    )
+    files["commands/index.js"] = command_index.encode("utf-8")
+    files["commands/bridge_jsx.js"] = b'''const { app, ScriptLanguage, UndoModes } = require("indesign");
+
+const executeJsx = async (command) => {
+    const { code, params } = command.options || {};
+    if (typeof code !== "string" || code.trim().length === 0) {
+        throw new Error("JSX source must not be empty.");
+    }
+
+    const input = JSON.stringify(params || {});
+    const source = `(function(params) {\\n${code}\\n}).call(app, ${input});`;
+    const result = app.doScript(
+        source,
+        ScriptLanguage.JAVASCRIPT,
+        [],
+        UndoModes.ENTIRE_SCRIPT,
+        "Adobe AI Bridge JSX",
+    );
+
+    if (result === undefined) return { success: true };
+    const serialized = JSON.stringify(result);
+    if (serialized === undefined) {
+        throw new Error("JSX must return a JSON-compatible result.");
+    }
+    return { result: JSON.parse(serialized) };
+};
+
+module.exports = {
+    commandHandlers: { executeJsx },
+};
+'''
+
     script = files["main.js"].decode("utf-8")
+    script = patch_once(
+        script,
+        "    let out = {\n        senderId: packet.senderId,\n    };",
+        "    let out = {\n        senderId: packet.senderId,\n        requestId: packet.requestId,\n    };",
+        "main.js request correlation",
+    )
     script = patch_once(
         script,
         'const PROXY_URL = "http://localhost:3001";',
@@ -137,6 +194,8 @@ def build() -> str:
     )
     if not re.search(r"auth:\s*\{\s*token\s*\}", script):
         raise SystemExit("The generated UXP plugin does not submit the authenticated bridge token.")
+    if not re.search(r"requestId:\s*packet\.requestId", script):
+        raise SystemExit("The generated UXP plugin does not return request IDs to the proxy.")
     if manifest["id"] != "org.adobe-ai-bridge.indesign":
         raise SystemExit("The generated UXP plugin identity is not owned by Adobe AI Bridge.")
     if manifest["requiredPermissions"]["network"]["domains"] != ["http://127.0.0.1:3001"]:

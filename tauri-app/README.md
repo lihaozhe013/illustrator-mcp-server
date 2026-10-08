@@ -1,8 +1,8 @@
-# Adobe AI Bridge Manager
+# Adobe AI Bridge Installer
 
-This is the macOS Tauri 2 application and runtime build project for independently managing the Adobe Illustrator and Adobe InDesign MCP engines.
+This directory builds the macOS Tauri installer, stable Rust launcher, and bundled Illustrator and InDesign MCP runtimes. The desktop app installs or replaces both runtimes and adds the selected OpenCode and WorkBuddy client entries. Clients own the MCP process lifetime after installation.
 
-Read the repository-root `SPEC.md` and `AGENTS.md` before implementation. New manager source, UI, and documentation are written in English. Real Adobe and real client checks are reported separately from unit and mock integration tests.
+The launcher forwards upstream MCP messages without filtering tools. Runtime packages add `execute_jsx` to both engines. The InDesign panel connects through the existing authenticated loopback proxy; Creative Cloud approval is manual.
 
 ## Development
 
@@ -15,8 +15,4 @@ pnpm bundle:runtimes
 pnpm --dir apps/desktop tauri dev
 ```
 
-Create the combined local DMG with `pnpm build:dmg`. Runtime sources, app bundles, and build caches are generated under ignored directories. The tracked InDesign Git snapshot is manually synchronized and hash-verified; Python/UXP runtime code is taken from pinned DXT/CCX release artifacts. The current DMG is unsigned and intended only for engineering inspection.
-
-## Current boundary
-
-The default launcher exposes reviewed read tools only. Template write operations are not enabled until the copy, validation, and commit transaction is implemented and tested against both Adobe applications. See root `docs/KNOWN_LIMITATIONS.md` and `docs/compatibility-matrix.md`.
+Create the combined local DMG with `pnpm build:dmg`. Patched upstream sources and build outputs are generated under ignored runtime directories. The tracked upstream snapshots remain unchanged.

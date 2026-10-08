@@ -1,8 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  createConfigPreview,
-  createConfigRemovalPreview,
-} from "../../packages/client-config/src/index.ts";
+import { createConfigPreview } from "../../packages/client-config/src/index.ts";
 
 describe("client configuration previews", () => {
   test("preserves OpenCode V2 comments and unrelated server entries", () => {
@@ -86,28 +83,6 @@ describe("client configuration previews", () => {
         launcherPath: "/bridge/launcher",
       }),
     ).toThrow(/Invalid JSONC/);
-  });
-
-  test("removes only the selected OpenCode entry while preserving comments", () => {
-    const source = `{
-  // Keep this server and its comment.
-  "mcp": {"servers": {
-    "notes": {"type": "local", "command": ["notes-mcp"]},
-    "illustrator-ai-bridge": {"type": "local", "command": ["/bridge/launcher", "--bridge", "illustrator"], "disabled": false}
-  }}
-}`;
-    const preview = createConfigRemovalPreview({
-      client: "opencode",
-      bridge: "illustrator",
-      configPath: "/tmp/opencode.jsonc",
-      text: source,
-      launcherPath: "/bridge/launcher",
-    });
-    expect(preview.action).toBe("remove");
-    expect(preview.conflict).toBe(false);
-    expect(preview.after).toContain("Keep this server and its comment.");
-    expect(preview.after).toContain('"notes"');
-    expect(preview.after).not.toContain("illustrator-ai-bridge");
   });
 });
 

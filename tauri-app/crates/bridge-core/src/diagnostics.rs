@@ -16,7 +16,6 @@ use crate::model::{BridgeId, BridgeStatus, CheckState, ClientStatus, Dashboard, 
 struct ProxyHealth {
     bridge: String,
     plugin_connected: bool,
-    outcome_unknown: bool,
 }
 
 #[must_use]
@@ -108,11 +107,10 @@ fn diagnose_bridge(bridge: BridgeId, support: &Path, adobe_apps: &AdobeAppsRepor
                     CheckState::Connected,
                     "The loopback InDesign proxy answered its health check.",
                 );
-                let mcp = if health.outcome_unknown {
-                    LayerStatus::new(CheckState::Degraded, "A previous document operation has an unknown outcome; inspect the document before recovery.")
-                } else {
-                    LayerStatus::new(CheckState::Degraded, "Proxy health is verified; MCP initialize and document read have not been run from this manager.")
-                };
+                let mcp = LayerStatus::new(
+                    CheckState::Degraded,
+                    "Proxy health is verified; MCP initialize and document read have not been run from this manager.",
+                );
                 (service, extension, mcp)
             }
             _ => (

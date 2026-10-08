@@ -58,6 +58,42 @@ def patch_sources() -> Path:
     importable_mcp_path = PATCHED_SOURCE / "id_mcp.py"
     shutil.copy2(id_mcp_path, importable_mcp_path)
 
+    core_path = PATCHED_SOURCE / "core.py"
+    core = core_path.read_text(encoding="utf-8")
+    core = replace_once(
+        core,
+        "def sendCommand(command:dict):\n\n    response = socket_client.send_message_blocking(command)",
+        "def sendCommand(command:dict, timeout_ms=None):\n\n    timeout = timeout_ms / 1000 if timeout_ms is not None else None\n    response = socket_client.send_message_blocking(command, timeout=timeout)",
+        "core.py per-request timeout",
+    )
+    core_path.write_text(core, encoding="utf-8")
+
+    script_tool = '''@mcp.tool()
+def execute_jsx(code: str, params: dict | None = None, timeout_ms: int = 60000):
+    """Execute trusted ExtendScript JSX in the active InDesign application."""
+    if not code.strip():
+        raise ValueError("JSX source must not be empty")
+    if timeout_ms < 1000 or timeout_ms > 300000:
+        raise ValueError("timeout_ms must be between 1000 and 300000")
+    command = createCommand("executeJsx", {
+        "code": code,
+        "params": params or {},
+        "timeoutMs": timeout_ms
+    })
+    return sendCommand(command, timeout_ms=timeout_ms + 10000)
+
+
+'''
+    id_mcp = id_mcp_path.read_text(encoding="utf-8")
+    id_mcp = replace_once(
+        id_mcp,
+        "# Instructions resource\n",
+        script_tool + "# Instructions resource\n",
+        "id-mcp.py JSX tool registration",
+    )
+    id_mcp_path.write_text(id_mcp, encoding="utf-8")
+    shutil.copy2(id_mcp_path, importable_mcp_path)
+
     socket_path = PATCHED_SOURCE / "socket_client.py"
     socket_client = socket_path.read_text(encoding="utf-8")
     socket_client = replace_once(
@@ -136,7 +172,7 @@ def patch_sources() -> Path:
                 raise SystemExit(f"Unredirected Python font log at line {line_number}.")
     fonts_path.write_text(fonts, encoding="utf-8")
 
-    for path in (id_mcp_path, importable_mcp_path, socket_path, fonts_path):
+    for path in (id_mcp_path, importable_mcp_path, core_path, socket_path, fonts_path):
         ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
     return PATCHED_SOURCE

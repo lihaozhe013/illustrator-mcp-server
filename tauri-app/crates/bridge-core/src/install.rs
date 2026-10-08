@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -22,178 +22,56 @@ struct BundleManifest {
     files: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BridgeInstallResult {
-    pub result: ActionResult,
-    pub installed_path: Option<String>,
-}
-
 #[must_use]
-pub fn install_bridge(bridge: BridgeId, resource_dir: &Path) -> BridgeInstallResult {
-    match install_bundle(bridge, resource_dir) {
-        Ok(path) => BridgeInstallResult {
-            result: ActionResult::success("RUNTIME_INSTALLED", format!("{} runtime {} is installed.", bridge.label(), path.version), "The previous version remains available for rollback."),
-            installed_path: Some(path.current.display().to_string()),
-        },
-        Err(error) => BridgeInstallResult {
-            result: ActionResult::failure("RUNTIME_INSTALL_FAILED", error.to_string(), "Review the bundled runtime manifest and retry. The current version was not switched."),
-            installed_path: None,
-        },
+pub fn install_all_bridges(resource_dir: &Path) -> ActionResult {
+    let stopped = crate::service::stop_indesign_proxy();
+    if !stopped.ok {
+        return stopped;
     }
-}
 
-#[must_use]
-pub fn rollback_bridge(bridge: BridgeId) -> ActionResult {
-    match rollback_bundle(bridge) {
-        Ok((from, to)) => ActionResult::success(
-            "RUNTIME_ROLLED_BACK",
-            format!("{} runtime switched from {from} to {to}.", bridge.label()),
-            "The version that was active before rollback remains installed.",
-        ),
+    let install_result = (|| {
+        install_shared_node(resource_dir)?;
+        install_launcher(resource_dir)?;
+        let mut installed = Vec::new();
+        let mut failures = Vec::new();
+        for bridge in [BridgeId::Illustrator, BridgeId::Indesign] {
+            match install_bundle(bridge, resource_dir) {
+                Ok(path) => installed.push(format!("{} {}", bridge.label(), path.version)),
+                Err(error) => failures.push(format!("{}: {error}", bridge.label())),
+            }
+        }
+        Ok::<_, InstallError>((installed, failures))
+    })();
+
+    let proxy_result = crate::service::start_indesign_proxy();
+    match install_result {
+        Ok((installed, mut failures)) => {
+            if !proxy_result.ok {
+                failures.push(format!("InDesign proxy: {}", proxy_result.message));
+            }
+            if failures.is_empty() {
+                ActionResult::success(
+                    "BRIDGES_INSTALLED",
+                    format!("Installed {} and {}.", installed[0], installed[1]),
+                    "Select the InDesign panel setup link if needed, then restart or reload the selected clients to load the full tool lists.",
+                )
+            } else {
+                ActionResult::failure(
+                    "BRIDGE_INSTALL_INCOMPLETE",
+                    format!("Installed: {}. Issues: {}", installed.join(", "), failures.join("; ")),
+                    "Run Install / Update again after correcting the reported issue. The manager keeps only the current runtime version.",
+                )
+            }
+        }
         Err(error) => ActionResult::failure(
-            "RUNTIME_ROLLBACK_FAILED",
-            error.to_string(),
-            "The currently active runtime was left in place.",
+            "BRIDGE_INSTALL_FAILED",
+            format!(
+                "The shared runtime could not be installed: {error}. Proxy status: {}",
+                proxy_result.message
+            ),
+            "Run Install / Update again after correcting the reported issue.",
         ),
     }
-}
-
-#[must_use]
-pub fn uninstall_bridge(bridge: BridgeId) -> ActionResult {
-    if bridge == BridgeId::Indesign {
-        let stopped = crate::service::stop_indesign_proxy();
-        if !stopped.ok {
-            return stopped;
-        }
-        if let Err(error) =
-            remove_managed_file(&application_support_dir().join("state/indesign.token"))
-        {
-            return ActionResult::failure(
-                "INDESIGN_TOKEN_CLEANUP_FAILED",
-                error.to_string(),
-                "The proxy is stopped. Inspect the protected InDesign token file before retrying uninstall.",
-            );
-        }
-    }
-    let support = application_support_dir();
-    let bridge_root = support.join("runtimes").join(bridge.as_str());
-    if let Err(error) = remove_managed_tree(&bridge_root) {
-        return ActionResult::failure(
-            "RUNTIME_UNINSTALL_FAILED",
-            error.to_string(),
-            "The bridge runtime could not be removed safely; inspect its Application Support directory.",
-        );
-    }
-
-    let another_bridge_is_installed = [BridgeId::Illustrator, BridgeId::Indesign]
-        .into_iter()
-        .filter(|candidate| *candidate != bridge)
-        .any(|candidate| {
-            let current = support
-                .join("runtimes")
-                .join(candidate.as_str())
-                .join("current");
-            fs::symlink_metadata(current).is_ok_and(|metadata| metadata.file_type().is_symlink())
-        });
-    if !another_bridge_is_installed {
-        if let Err(error) = remove_managed_tree(&support.join("shared/node")) {
-            return ActionResult::failure(
-                "SHARED_RUNTIME_CLEANUP_FAILED",
-                error.to_string(),
-                "The selected bridge was removed, but shared Node could not be cleaned up safely.",
-            );
-        }
-        let launcher = support.join("bin/adobe-mcp-launcher");
-        match fs::symlink_metadata(&launcher) {
-            Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
-                if fs::remove_file(&launcher).is_err() {
-                    return ActionResult::failure(
-                        "SHARED_RUNTIME_CLEANUP_FAILED",
-                        "The last bridge runtime was removed, but the managed launcher could not be removed.",
-                        "Remove the Adobe AI Bridge launcher from its Application Support bin directory after closing clients.",
-                    );
-                }
-            }
-            Ok(_) => {
-                return ActionResult::failure(
-                    "SHARED_RUNTIME_OWNERSHIP_CONFLICT",
-                    "The launcher path is not a regular file and was left untouched.",
-                    "Inspect the launcher path before removing shared manager files.",
-                )
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => {
-                return ActionResult::failure(
-                    "SHARED_RUNTIME_CLEANUP_FAILED",
-                    "The launcher could not be inspected safely.",
-                    "Check Application Support permissions and retry.",
-                )
-            }
-        }
-    }
-    ActionResult::success(
-        "RUNTIME_UNINSTALLED",
-        format!("{} runtime files were removed.", bridge.label()),
-        "Client configuration entries are preserved. Remove them separately with the configuration preview if desired.",
-    )
-}
-
-fn rollback_bundle(bridge: BridgeId) -> Result<(String, String), InstallError> {
-    let root = application_support_dir()
-        .join("runtimes")
-        .join(bridge.as_str());
-    let versions = root.join("versions");
-    let current_version = current_version(&root)?;
-    let mut candidates = Vec::new();
-    for entry in fs::read_dir(&versions)? {
-        let entry = entry?;
-        let metadata = fs::symlink_metadata(entry.path())?;
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
-            continue;
-        }
-        let version = entry.file_name().to_string_lossy().into_owned();
-        if version == current_version || !is_safe_version(&version) {
-            continue;
-        }
-        let manifest: BundleManifest =
-            serde_json::from_slice(&fs::read(entry.path().join("bridge-runtime.json"))?)?;
-        if manifest.bridge_id != bridge || manifest.version != version {
-            continue;
-        }
-        validate_bundle(&entry.path(), &manifest)?;
-        candidates.push((
-            metadata.modified().unwrap_or(std::time::UNIX_EPOCH),
-            version,
-        ));
-    }
-    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.0));
-    let Some((_, target_version)) = candidates.into_iter().next() else {
-        return Err(InstallError::NoRollbackVersion(bridge));
-    };
-    switch_current_link(&root, "versions", &target_version)?;
-    Ok((current_version, target_version))
-}
-
-fn current_version(root: &Path) -> Result<String, InstallError> {
-    let current = root.join("current");
-    let metadata = fs::symlink_metadata(&current)?;
-    if !metadata.file_type().is_symlink() {
-        return Err(InstallError::UnsafeCurrentPath);
-    }
-    let target = fs::read_link(current)?;
-    let components: Vec<_> = target.components().collect();
-    if components.len() != 2 || components[0] != std::path::Component::Normal("versions".as_ref()) {
-        return Err(InstallError::UnsafeCurrentPath);
-    }
-    let version = components[1]
-        .as_os_str()
-        .to_str()
-        .ok_or(InstallError::InvalidManifest)?;
-    if !is_safe_version(version) {
-        return Err(InstallError::InvalidManifest);
-    }
-    Ok(version.to_owned())
 }
 
 fn remove_managed_tree(path: &Path) -> Result<(), InstallError> {
@@ -208,26 +86,19 @@ fn remove_managed_tree(path: &Path) -> Result<(), InstallError> {
     }
 }
 
-fn remove_managed_file(path: &Path) -> Result<(), InstallError> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
-            fs::remove_file(path)?;
-            Ok(())
-        }
-        Ok(_) => Err(InstallError::UnsafeCurrentPath),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.into()),
-    }
-}
-
 struct InstallPath {
-    current: PathBuf,
     version: String,
 }
 
 fn install_bundle(bridge: BridgeId, resource_dir: &Path) -> Result<InstallPath, InstallError> {
-    install_shared_node(resource_dir)?;
-    install_launcher(resource_dir)?;
+    install_bundle_at(bridge, resource_dir, &application_support_dir())
+}
+
+fn install_bundle_at(
+    bridge: BridgeId,
+    resource_dir: &Path,
+    support_dir: &Path,
+) -> Result<InstallPath, InstallError> {
     let source = resource_dir.join("bridges").join(bridge.as_str());
     let manifest_path = source.join("bridge-runtime.json");
     let manifest: BundleManifest = serde_json::from_slice(
@@ -238,42 +109,29 @@ fn install_bundle(bridge: BridgeId, resource_dir: &Path) -> Result<InstallPath, 
     }
     validate_bundle(&source, &manifest)?;
 
-    let root = application_support_dir()
-        .join("runtimes")
-        .join(bridge.as_str());
+    let root = support_dir.join("runtimes").join(bridge.as_str());
     create_private_directory_tree(&root)?;
     let versions = root.join("versions");
     create_private_directory_tree(&versions)?;
-    let final_dir = versions.join(&manifest.version);
-    if final_dir.exists() {
-        verify_bundle(&final_dir, &manifest)?;
-    } else {
-        let staging = versions.join(format!(".staging-{}", Uuid::new_v4()));
-        fs::create_dir(&staging)?;
-        set_private_permissions(&staging)?;
-        let copy_result = copy_bundle(&source, &staging, &manifest);
-        if let Err(error) = copy_result {
-            let _ = fs::remove_dir_all(&staging);
-            return Err(error);
-        }
-        fs::rename(&staging, &final_dir)?;
+    let staging = versions.join(format!(".staging-{}", Uuid::new_v4()));
+    let installed_name = format!("{}-install-{}", manifest.version, Uuid::new_v4());
+    let final_dir = versions.join(&installed_name);
+    fs::create_dir(&staging)?;
+    set_private_permissions(&staging)?;
+    let copy_result =
+        copy_bundle(&source, &staging, &manifest).and_then(|()| verify_bundle(&staging, &manifest));
+    if let Err(error) = copy_result {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error);
     }
+    fs::rename(&staging, &final_dir)?;
 
-    let current = root.join("current");
-    let temporary_link = root.join(format!(".current-{}", Uuid::new_v4()));
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(
-        Path::new("versions").join(&manifest.version),
-        &temporary_link,
-    )?;
-    if fs::symlink_metadata(&current).is_ok_and(|metadata| !metadata.file_type().is_symlink()) {
-        let _ = fs::remove_file(&temporary_link);
-        return Err(InstallError::UnsafeCurrentPath);
+    if let Err(error) = switch_current_link(&root, "versions", &installed_name) {
+        let _ = remove_managed_tree(&final_dir);
+        return Err(error);
     }
-    fs::rename(&temporary_link, &current)?;
-    sync_directory(&root)?;
+    remove_old_versions(&versions, &installed_name)?;
     Ok(InstallPath {
-        current,
         version: manifest.version,
     })
 }
@@ -292,6 +150,10 @@ struct LauncherManifest {
 }
 
 fn install_shared_node(resource_dir: &Path) -> Result<(), InstallError> {
+    install_shared_node_at(resource_dir, &application_support_dir())
+}
+
+fn install_shared_node_at(resource_dir: &Path, support_dir: &Path) -> Result<(), InstallError> {
     let source = resource_dir.join("shared/node");
     let manifest: SharedRuntimeManifest =
         serde_json::from_slice(&fs::read(source.join("node-runtime.json"))?)?;
@@ -300,38 +162,47 @@ fn install_shared_node(resource_dir: &Path) -> Result<(), InstallError> {
     }
     validate_file_map(&source, &manifest.files)?;
 
-    let root = application_support_dir().join("shared/node");
+    let root = support_dir.join("shared/node");
     create_private_directory_tree(&root)?;
     let versions = root.join("versions");
     create_private_directory_tree(&versions)?;
-    let final_dir = versions.join(&manifest.version);
-    if final_dir.exists() {
-        validate_file_map(&final_dir, &manifest.files)?;
-    } else {
-        let staging = versions.join(format!(".staging-{}", Uuid::new_v4()));
-        fs::create_dir(&staging)?;
-        set_private_permissions(&staging)?;
-        for (relative, expected_hash) in &manifest.files {
-            let input = safe_join(&source, relative)?;
-            let output = safe_join(&staging, relative)?;
-            if let Some(parent) = output.parent() {
-                create_private_directory_tree(parent)?;
-            }
-            let executable = has_executable_bit(&input)?;
-            fs::copy(&input, &output)?;
-            set_private_file_permissions(&output, executable)?;
-            if hash_file(&output)? != *expected_hash {
-                let _ = fs::remove_dir_all(&staging);
-                return Err(InstallError::IntegrityFailure(relative.clone()));
-            }
+    let staging = versions.join(format!(".staging-{}", Uuid::new_v4()));
+    let installed_name = format!("{}-install-{}", manifest.version, Uuid::new_v4());
+    let final_dir = versions.join(&installed_name);
+    fs::create_dir(&staging)?;
+    set_private_permissions(&staging)?;
+    for (relative, expected_hash) in &manifest.files {
+        let input = safe_join(&source, relative)?;
+        let output = safe_join(&staging, relative)?;
+        if let Some(parent) = output.parent() {
+            create_private_directory_tree(parent)?;
         }
-        fs::copy(
-            source.join("node-runtime.json"),
-            staging.join("node-runtime.json"),
-        )?;
-        fs::rename(&staging, &final_dir)?;
+        let executable = has_executable_bit(&input)?;
+        fs::copy(&input, &output)?;
+        set_private_file_permissions(&output, executable)?;
+        if hash_file(&output)? != *expected_hash {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(InstallError::IntegrityFailure(relative.clone()));
+        }
     }
-    switch_current_link(&root, "versions", &manifest.version)?;
+    fs::copy(
+        source.join("node-runtime.json"),
+        staging.join("node-runtime.json"),
+    )?;
+    fs::rename(&staging, &final_dir)?;
+    switch_current_link(&root, "versions", &installed_name)?;
+    remove_old_versions(&versions, &installed_name)?;
+    Ok(())
+}
+
+fn remove_old_versions(versions: &Path, active_version: &str) -> Result<(), InstallError> {
+    for entry in fs::read_dir(versions)? {
+        let entry = entry?;
+        if entry.file_name() == active_version {
+            continue;
+        }
+        remove_managed_tree(&entry.path())?;
+    }
     Ok(())
 }
 
@@ -560,8 +431,6 @@ pub(crate) enum InstallError {
     InvalidManifest,
     #[error("Runtime integrity verification failed for {0}.")]
     IntegrityFailure(String),
-    #[error("No earlier installed {0:?} runtime is available for rollback.")]
-    NoRollbackVersion(BridgeId),
     #[error("A managed runtime path contains a symbolic link or unexpected file.")]
     UnsafeCurrentPath,
     #[error(transparent)]
@@ -572,40 +441,45 @@ pub(crate) enum InstallError {
 
 #[cfg(test)]
 mod tests {
-    use super::{current_version, remove_managed_tree, InstallError};
+    use super::{
+        hash_file, install_bundle_at, remove_managed_tree, remove_old_versions,
+        switch_current_link, InstallError,
+    };
+    use crate::model::BridgeId;
+    use serde_json::json;
     use std::{fs, path::PathBuf};
     use uuid::Uuid;
 
     fn temporary_path(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("adobe-ai-bridge-{label}-{}", Uuid::new_v4()))
+        fs::canonicalize(std::env::temp_dir())
+            .expect("temporary directory should resolve")
+            .join(format!("adobe-ai-bridge-{label}-{}", Uuid::new_v4()))
+    }
+
+    fn write_bundle_fixture(root: &std::path::Path, version: &str, contents: &str) {
+        let source = root.join("bridges/illustrator");
+        fs::create_dir_all(&source).expect("bundle fixture directory should be created");
+        let payload = source.join("payload.bin");
+        fs::write(&payload, contents).expect("bundle fixture payload should be written");
+        let manifest = json!({
+            "bridgeId": "illustrator",
+            "version": version,
+            "files": { "payload.bin": hash_file(&payload).unwrap() }
+        });
+        fs::write(
+            source.join("bridge-runtime.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .expect("bundle fixture manifest should be written");
     }
 
     #[cfg(unix)]
     #[test]
-    fn current_runtime_link_must_stay_under_the_versions_directory() {
+    fn runtime_cleanup_refuses_to_follow_a_symlinked_directory() {
         use std::os::unix::fs::symlink;
 
-        let root = temporary_path("current-link");
-        fs::create_dir_all(&root).expect("temporary runtime root should be created");
-        symlink("versions/1.2.3", root.join("current")).expect("managed link should be created");
-        assert_eq!(current_version(&root).unwrap(), "1.2.3");
-        fs::remove_file(root.join("current")).expect("managed link should be removed");
-        symlink("versions/../../outside", root.join("current"))
-            .expect("unsafe link fixture should be created");
-        assert!(matches!(
-            current_version(&root),
-            Err(InstallError::UnsafeCurrentPath)
-        ));
-        fs::remove_dir_all(root).expect("temporary runtime root should be removed");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn uninstall_refuses_to_follow_a_symlinked_runtime_directory() {
-        use std::os::unix::fs::symlink;
-
-        let root = temporary_path("uninstall-link");
-        let target = temporary_path("uninstall-target");
+        let root = temporary_path("runtime-link");
+        let target = temporary_path("runtime-target");
         fs::create_dir_all(&target).expect("temporary target should be created");
         fs::write(target.join("keep.txt"), "preserve").expect("target fixture should be written");
         symlink(&target, &root).expect("symlink fixture should be created");
@@ -619,5 +493,76 @@ mod tests {
         );
         fs::remove_file(root).expect("symlink fixture should be removed");
         fs::remove_dir_all(target).expect("target fixture should be removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runtime_update_switches_current_then_prunes_the_previous_version() {
+        use std::os::unix::fs::symlink;
+
+        let root = temporary_path("runtime-update");
+        let versions = root.join("versions");
+        fs::create_dir_all(versions.join("1.0.0-install-old"))
+            .expect("old runtime fixture should be created");
+        fs::create_dir_all(versions.join("1.0.0-install-new"))
+            .expect("new runtime fixture should be created");
+        symlink("versions/1.0.0-install-old", root.join("current"))
+            .expect("old active pointer should be created");
+
+        switch_current_link(&root, "versions", "1.0.0-install-new")
+            .expect("runtime pointer should switch");
+        remove_old_versions(&versions, "1.0.0-install-new").expect("old version should be pruned");
+
+        assert_eq!(
+            fs::read_link(root.join("current")).unwrap(),
+            PathBuf::from("versions/1.0.0-install-new")
+        );
+        assert!(versions.join("1.0.0-install-new").is_dir());
+        assert!(!versions.join("1.0.0-install-old").exists());
+        fs::remove_dir_all(root).expect("temporary runtime root should be removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bundle_install_replaces_same_version_and_prunes_upgraded_versions() {
+        let resource = temporary_path("bundle-source");
+        let support = temporary_path("bundle-support");
+        write_bundle_fixture(&resource, "1.0.0", "first install");
+
+        let first = install_bundle_at(BridgeId::Illustrator, &resource, &support)
+            .expect("initial bundle install should pass");
+        let root = support.join("runtimes/illustrator");
+        let versions = root.join("versions");
+        let first_current = root.join("current").canonicalize().unwrap();
+        assert_eq!(
+            fs::read(first_current.join("payload.bin")).unwrap(),
+            b"first install"
+        );
+        assert_eq!(first.version, "1.0.0");
+        assert_eq!(fs::read_dir(&versions).unwrap().count(), 1);
+
+        write_bundle_fixture(&resource, "1.0.0", "same-version replacement");
+        install_bundle_at(BridgeId::Illustrator, &resource, &support)
+            .expect("same-version reinstall should copy the complete bundle");
+        let replacement_current = root.join("current").canonicalize().unwrap();
+        assert_ne!(first_current, replacement_current);
+        assert_eq!(
+            fs::read(replacement_current.join("payload.bin")).unwrap(),
+            b"same-version replacement"
+        );
+        assert_eq!(fs::read_dir(&versions).unwrap().count(), 1);
+
+        write_bundle_fixture(&resource, "2.0.0", "upgraded runtime");
+        let upgraded = install_bundle_at(BridgeId::Illustrator, &resource, &support)
+            .expect("upgraded bundle should install");
+        let upgraded_current = root.join("current").canonicalize().unwrap();
+        assert_eq!(upgraded.version, "2.0.0");
+        assert_eq!(
+            fs::read(upgraded_current.join("payload.bin")).unwrap(),
+            b"upgraded runtime"
+        );
+        assert_eq!(fs::read_dir(&versions).unwrap().count(), 1);
+        fs::remove_dir_all(resource).expect("bundle fixture should be removed");
+        fs::remove_dir_all(support).expect("runtime fixture should be removed");
     }
 }

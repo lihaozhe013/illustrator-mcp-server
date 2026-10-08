@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "Adobe AI Bridge",
-        "width": 1024,
-        "height": 800,
-        "minWidth": 780,
-        "minHeight": 640,
+        "width": 760,
+        "height": 660,
+        "minWidth": 560,
+        "minHeight": 560,
         "resizable": true
       }
     ],
@@ -35,7 +35,7 @@
       "../../../runtime/bundles/bridge-tools/": "bridge-tools/"
     },
     "category": "public.app-category.utilities",
-    "shortDescription": "Manage Adobe Illustrator and InDesign AI bridges",
+    "shortDescription": "Install Adobe Illustrator and InDesign MCP bridges",
     "macOS": {
       "minimumSystemVersion": "13.0"
     }

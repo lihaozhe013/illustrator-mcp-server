@@ -9,7 +9,7 @@ export type ConfigSchema =
   | "workbuddy-mcpServers";
 
 export type ConfigPreview = {
-  action: "install" | "remove";
+  action: "install";
   client: ClientId;
   bridge: BridgeId;
   configPath: string;
@@ -89,85 +89,6 @@ export function createConfigPreview(input: {
   });
   return {
     action: "install",
-    client: input.client,
-    bridge: input.bridge,
-    configPath: input.configPath,
-    schema,
-    before: input.text,
-    after: applyEdits(input.text, edits),
-    conflict: false,
-    alreadyConfigured: false,
-  };
-}
-
-export function createConfigRemovalPreview(input: {
-  client: ClientId;
-  bridge: BridgeId;
-  configPath: string;
-  text: string;
-  launcherPath: string;
-}): ConfigPreview {
-  const root = parse(input.text, [], {
-    allowTrailingComma: true,
-    disallowComments: false,
-  });
-  if (
-    root === undefined ||
-    root === null ||
-    typeof root !== "object" ||
-    Array.isArray(root)
-  ) {
-    throw new Error("The client configuration must contain a JSON object.");
-  }
-
-  const errors: ParseError[] = [];
-  parse(input.text, errors, {
-    allowTrailingComma: true,
-    disallowComments: false,
-  });
-  if (errors.length > 0) {
-    const first = errors[0];
-    if (!first)
-      throw new Error("The client configuration contains invalid JSONC.");
-    throw new Error(
-      `Invalid JSONC at offset ${first.offset}: ${printParseErrorCode(first.error)}.`,
-    );
-  }
-
-  const { schema, path } = resolveEntryPath(
-    input.client,
-    input.text,
-    input.bridge,
-  );
-  const existing = getAtPath(root, path);
-  const expected = makeEntry(
-    input.client,
-    schema,
-    input.bridge,
-    input.launcherPath,
-  );
-  const missing = existing === undefined;
-  const conflict =
-    !missing && stableStringify(existing) !== stableStringify(expected);
-  if (missing || conflict) {
-    return {
-      action: "remove",
-      client: input.client,
-      bridge: input.bridge,
-      configPath: input.configPath,
-      schema,
-      before: input.text,
-      after: input.text,
-      conflict,
-      alreadyConfigured: missing,
-    };
-  }
-
-  const edits = modify(input.text, path, undefined, {
-    formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
-  });
-  return {
-    action: "remove",
     client: input.client,
     bridge: input.bridge,
     configPath: input.configPath,

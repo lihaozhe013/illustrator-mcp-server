@@ -1,16 +1,14 @@
-# Risk Register
+# Runtime Risks
 
 Updated: 2026-10-08.
 
 | Risk | Effect | Mitigation / status |
 |---|---|---|
-| The tracked InDesign Git snapshot contains documentation/installers but not the Python/UXP implementation | Build provenance depends on release artifacts as well as the tracked snapshot | Manually synchronize the reviewed Git snapshot, verify its per-file hashes, pin both release archive hashes, retain source extraction and narrowly scoped deterministic patches, and verify the derived UXP checksum |
-| UXP requests `localFileSystem: fullAccess` | The extension can access local files through its upstream command surface | Creative Cloud must ask the user to approve; network permission is restricted to loopback; default MCP launcher filters to reviewed read tools. Keep template writes disabled until path and transaction validation is implemented |
-| Local port 3001 may already be occupied | The proxy cannot start or may be confused with another local service | Bind loopback, report an explicit conflict, and never terminate the existing process |
-| UXP disconnect or timeout during a write can leave an unknown document state | Retrying could duplicate an operation | Proxy serializes requests and persists an unknown-outcome marker; real plugin behavior and recovery UI are not yet verified |
-| OpenCode/WorkBuddy versions may interpret schemas differently | A valid JSON entry may not start the server | Config previews are tested locally; actual client launch/initialize remains blocked pending real-client validation |
-| Configuration comments and external edits can be lost | User settings may be damaged | JSONC-aware frontend edits, Rust semantic guard, expected-file hash, private backup, atomic replacement, and exact-entry-only removal |
-| Runtime source and final app may differ by build environment | Reproduction and supply-chain risk | Pin upstream commits, archives, Node version, npm lockfiles and Python `uv.lock`; hash generated bundles; verify arm64 outputs |
-| PyInstaller and npm runtime bundles can contain extra libraries | App size and license obligations increase | Inventory included dependency metadata and license texts, audit production npm dependencies, and inspect the final resource manifest before release |
-| No Developer ID signing identity is available | macOS trust prompts prevent clean-user deployment | Current DMG is unsigned and only for internal engineering inspection; signing/notarization remain blocked |
-| M1 recovery and M3 safe template pipeline are incomplete | End-user workflow is not yet production-complete | Keep the tool allowlist read-only, document the gap, and do not claim the Definition of Done |
+| Full upstream editing tools and JSX are exposed | Agent calls can make direct document changes or run arbitrary local scripts through Adobe | This is the intended trusted-agent model. JSX is described as unsandboxed local code. The agent chooses save, copy, and undo behavior. |
+| UXP requires `localFileSystem: fullAccess` and Creative Cloud approval | InDesign panel setup cannot be fully automated | The package restricts network access to `http://127.0.0.1:3001`; the installer opens the package and copies a token, while the user approves and connects the panel. |
+| Local port 3001 may already be occupied | The InDesign proxy cannot start | Bind only to loopback, report the conflict, and never terminate an unrelated process. |
+| UXP disconnect or timeout during an edit leaves the document state uncertain | Repeating an edit may duplicate its effect | Report `outcomeUnknown`, do not retry automatically, and allow later calls so the agent can inspect the document and decide. |
+| Client config entries may conflict or client schemas may change | A client may not start the configured bridge | Preserve conflicting entries, report the issue, retain JSONC comments and unrelated settings, and verify each client handshake separately. |
+| Runtime staging or pointer replacement is interrupted | A bridge may fail to start until installation is rerun | Copy to a unique staging directory, validate hashes, atomically replace the current pointer, then prune old app-owned directories. Same-version reinstall follows the same path. |
+| No Developer ID signing identity is available | macOS trust prompts prevent clean-user installation | Current DMG is internal and unsigned; signing and notarization remain separate release gates. |
+| Tracked source differs from the packaged sources | Runtime provenance becomes unclear | Pin upstream commits and release checksums, verify manifests, and patch only ignored build copies. |

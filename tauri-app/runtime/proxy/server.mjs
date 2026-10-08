@@ -36,7 +36,6 @@ export function createBridgeProxy(options = {}) {
   const port = options.port ?? PORT;
   const stateDir = options.stateDir ?? process.env.INDESIGN_BRIDGE_STATE_DIR;
   if (!stateDir) throw new Error("INDESIGN_BRIDGE_STATE_DIR must identify the private proxy state directory.");
-  const pendingPath = path.join(stateDir, "indesign-operation-pending.json");
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   if ((fs.statSync(stateDir).mode & 0o077) !== 0) throw new Error("The bridge state directory must not be accessible by other users.");
 
@@ -45,7 +44,6 @@ export function createBridgeProxy(options = {}) {
     response.json({
       bridge: "indesign",
       pluginConnected: activePluginId !== null,
-      outcomeUnknown: poisoned,
     });
   });
   const server = http.createServer(app);
@@ -58,7 +56,6 @@ export function createBridgeProxy(options = {}) {
 
   let activePluginId = null;
   let queuedOperations = Promise.resolve();
-  let poisoned = fs.existsSync(pendingPath);
   const pending = new Map();
 
   io.use((socket, next) => {
@@ -69,8 +66,7 @@ export function createBridgeProxy(options = {}) {
     next(new Error("The bridge session token is invalid."));
   });
 
-  function poisonPendingOperations(reason) {
-    poisoned = true;
+  function failPendingOperations(reason) {
     for (const operation of pending.values()) {
       clearTimeout(operation.timer);
       operation.resolve({
@@ -118,15 +114,6 @@ export function createBridgeProxy(options = {}) {
 
       clearTimeout(operation.timer);
       pending.delete(packet.senderId);
-      try {
-        fs.unlinkSync(pendingPath);
-      } catch (error) {
-        if (error?.code !== "ENOENT") {
-          poisoned = true;
-          operation.resolve({ status: "FAILURE", message: "Could not clear the pending-operation recovery marker.", outcomeUnknown: true });
-          return;
-        }
-      }
       operation.resolve(packet);
     });
 
@@ -137,10 +124,6 @@ export function createBridgeProxy(options = {}) {
       }
 
       const operation = queuedOperations.then(async () => {
-        if (poisoned || fs.existsSync(pendingPath)) {
-          poisoned = true;
-          return { status: "FAILURE", message: "A previous document operation has an unknown outcome. Reopen and inspect the document before restarting the bridge.", outcomeUnknown: true };
-        }
         if (activePluginId === null) {
           return { status: "FAILURE", message: "The authenticated InDesign plugin is not connected." };
         }
@@ -152,29 +135,20 @@ export function createBridgeProxy(options = {}) {
         }
 
         const requestId = crypto.randomUUID();
-        const marker = {
-          requestId,
-          action: message.command.action,
-          startedAt: new Date().toISOString(),
-        };
-        const markerFd = fs.openSync(pendingPath, "wx", 0o600);
-        try {
-          fs.writeFileSync(markerFd, JSON.stringify(marker), "utf8");
-          fs.fsyncSync(markerFd);
-        } finally {
-          fs.closeSync(markerFd);
-        }
+        const requestedTimeout = Number(message.command.options?.timeoutMs);
+        const operationWait = Number.isFinite(requestedTimeout) && requestedTimeout > 0
+          ? Math.min(MAX_OPERATION_WAIT_MS, requestedTimeout + 5_000)
+          : MAX_OPERATION_WAIT_MS;
 
         const response = await new Promise((resolve) => {
           const timer = setTimeout(() => {
             pending.delete(socket.id);
-            poisoned = true;
             resolve({
               status: "FAILURE",
               message: "The document operation timed out. Its outcome is unknown; inspect the document in InDesign before requesting another change.",
               outcomeUnknown: true,
             });
-          }, MAX_OPERATION_WAIT_MS);
+          }, operationWait);
           pending.set(socket.id, { requestId, timer, resolve });
           plugin.emit("command_packet", {
             senderId: socket.id,
@@ -196,7 +170,7 @@ export function createBridgeProxy(options = {}) {
     socket.on("disconnect", () => {
       if (!socket.data.isIndesignPlugin || activePluginId !== socket.id) return;
       activePluginId = null;
-      if (pending.size > 0) poisonPendingOperations("The InDesign plugin disconnected while a document operation was running.");
+      if (pending.size > 0) failPendingOperations("The InDesign plugin disconnected while a document operation was running.");
     });
   });
 

@@ -43,7 +43,7 @@ def decode_result(result: Any) -> dict[str, Any]:
 
 
 @pytest.mark.integration
-def test_pinned_upstream_stdio_tools_read_only_calls_and_serializes() -> None:
+def test_pinned_upstream_exposes_full_stdio_tools_and_serializes_edits() -> None:
     asyncio.run(exercise_mcp_stdio())
 
 
@@ -81,6 +81,7 @@ async def exercise_mcp_stdio() -> None:
         active = 0
         maximum_active = 0
         call_count = 0
+        received_commands: list[dict[str, Any]] = []
         state_lock = asyncio.Lock()
 
         try:
@@ -96,15 +97,22 @@ async def exercise_mcp_stdio() -> None:
                     active += 1
                     maximum_active = max(maximum_active, active)
                     call_count += 1
+                    received_commands.append(message["command"])
                 try:
                     await asyncio.sleep(0.05)
+                    command = message["command"]
+                    failed = (
+                        command.get("action") == "executeJsx"
+                        and "throw new Error" in command.get("options", {}).get("code", "")
+                    )
                     await plugin.emit(
                         "command_packet_response",
                         {
                             "packet": {
                                 "senderId": message["senderId"],
                                 "requestId": message["requestId"],
-                                "status": "SUCCESS",
+                                "status": "FAILURE" if failed else "SUCCESS",
+                                "message": "JSX execution failed in the mock panel." if failed else "",
                                 "response": {
                                     "activeDocument": None,
                                     "pageCount": 3,
@@ -153,14 +161,38 @@ async def exercise_mcp_stdio() -> None:
                     assert initialized.serverInfo.name == "Adobe InDesign MCP Server"
                     tools = await session.list_tools()
                     names = {tool.name for tool in tools.tools}
-                    assert len(names) >= 90
+                    assert len(names) == 100
                     assert "get_active_document_settings" in names
                     assert "populate_template" in names
+                    assert "open_document" in names
+                    assert "execute_jsx" in names
 
                     result = await session.call_tool("get_active_document_settings", {})
                     assert not result.isError
                     response = decode_result(result)
                     assert response["response"]["pageCount"] == 3
+
+                    opened = await session.call_tool(
+                        "open_document", {"file_path": "/tmp/fixture.indd"}
+                    )
+                    assert not opened.isError
+
+                    jsx = await session.call_tool(
+                        "execute_jsx",
+                        {
+                            "code": "return { edited: true };",
+                            "params": {"label": "fixture"},
+                            "timeout_ms": 60000,
+                        },
+                    )
+                    assert not jsx.isError
+
+                    failed_jsx = await session.call_tool(
+                        "execute_jsx",
+                        {"code": "throw new Error('fixture failure');"},
+                    )
+                    assert failed_jsx.isError
+                    assert "JSX execution failed" in str(failed_jsx.content)
 
                     concurrent_results = await asyncio.gather(
                         *(
@@ -170,8 +202,16 @@ async def exercise_mcp_stdio() -> None:
                     )
                     assert all(not call_result.isError for call_result in concurrent_results)
 
-            assert call_count == 5
+            assert call_count == 8
             assert maximum_active == 1, "The proxy executed two InDesign operations concurrently."
+            assert received_commands[1]["action"] == "openDocument"
+            assert received_commands[2]["action"] == "executeJsx"
+            assert received_commands[2]["options"] == {
+                "code": "return { edited: true };",
+                "params": {"label": "fixture"},
+                "timeoutMs": 60000,
+            }
+            assert received_commands[3]["action"] == "executeJsx"
             assert not (state_dir / "indesign-operation-pending.json").exists()
         finally:
             if plugin is not None and plugin.connected:

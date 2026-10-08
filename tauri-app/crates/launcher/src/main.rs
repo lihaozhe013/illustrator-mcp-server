@@ -160,15 +160,7 @@ fn run() -> Result<(), (i32, String)> {
             match reader.read_line(&mut line) {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
-                    let output_line = match serde_json::from_str::<Value>(line.trim_end()) {
-                        Ok(mut message) => {
-                            filter_tools_list(&mut message, bridge);
-                            serde_json::to_string(&message)
-                                .unwrap_or_else(|_| line.trim_end().to_owned())
-                        }
-                        Err(_) => line.trim_end().to_owned(),
-                    };
-                    if write_protocol_line(&response_output, &output_line).is_err() {
+                    if write_protocol_line(&response_output, line.trim_end()).is_err() {
                         break;
                     }
                 }
@@ -180,36 +172,6 @@ fn run() -> Result<(), (i32, String)> {
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
         let line = line.map_err(|_| (74, "could not read MCP stdio input".to_owned()))?;
-        if let Ok(message) = serde_json::from_str::<Value>(&line) {
-            if is_tool_call(&message) {
-                let Some(name) = message.pointer("/params/name").and_then(Value::as_str) else {
-                    if let Some(id) = message.get("id") {
-                        let _ = write_protocol_line(
-                            &output,
-                            &json_rpc_error(
-                                id,
-                                -32602,
-                                "The MCP tool call is missing a tool name.",
-                            ),
-                        );
-                    }
-                    continue;
-                };
-                if !tool_is_allowed(bridge, name) {
-                    if let Some(id) = message.get("id") {
-                        let _ = write_protocol_line(
-                            &output,
-                            &json_rpc_error(
-                                id,
-                                -32601,
-                                "This tool is not enabled by the Adobe AI Bridge default allowlist.",
-                            ),
-                        );
-                    }
-                    continue;
-                }
-            }
-        }
         writeln!(writer, "{line}")
             .map_err(|_| (70, "the MCP runtime stopped accepting requests".to_owned()))?;
         writer
@@ -231,54 +193,14 @@ fn run() -> Result<(), (i32, String)> {
     }
 }
 
-fn is_tool_call(message: &Value) -> bool {
-    message.get("method").and_then(Value::as_str) == Some("tools/call")
-}
-
-fn tool_is_allowed(bridge: BridgeId, name: &str) -> bool {
-    match bridge {
-        BridgeId::Illustrator => matches!(
-            name,
-            "get_document_info" | "get_artboards" | "list_fonts" | "convert_coordinate"
-        ),
-        BridgeId::Indesign => matches!(
-            name,
-            "get_active_document_settings"
-                | "get_document_info"
-                | "get_page_image"
-                | "get_story_contents"
-                | "get_documents"
-        ),
-    }
-}
-
-fn filter_tools_list(message: &mut Value, bridge: BridgeId) {
-    let Some(tools) = message
-        .pointer_mut("/result/tools")
-        .and_then(Value::as_array_mut)
-    else {
-        return;
-    };
-    tools.retain(|tool| {
-        tool.get("name")
-            .and_then(Value::as_str)
-            .is_some_and(|name| tool_is_allowed(bridge, name))
-    });
-}
-
-fn json_rpc_error(id: &Value, code: i64, message: &str) -> String {
-    serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "error": { "code": code, "message": message }
-    })
-    .to_string()
-}
-
 fn write_protocol_line(output: &Arc<Mutex<BufWriter<io::Stdout>>>, line: &str) -> io::Result<()> {
     let mut output = output
         .lock()
         .map_err(|_| io::Error::other("protocol output lock was poisoned"))?;
+    write_protocol_message(&mut *output, line)
+}
+
+fn write_protocol_message(output: &mut impl Write, line: &str) -> io::Result<()> {
     writeln!(output, "{line}")?;
     output.flush()
 }
@@ -298,9 +220,7 @@ fn runtime_path(support: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{filter_tools_list, runtime_path, tool_is_allowed};
-    use adobe_ai_bridge_core::model::BridgeId;
-    use serde_json::json;
+    use super::{runtime_path, write_protocol_message};
     use std::path::Path;
 
     #[test]
@@ -312,25 +232,10 @@ mod tests {
     }
 
     #[test]
-    fn engine_allowlists_do_not_expose_upstream_write_or_script_tools() {
-        assert!(tool_is_allowed(BridgeId::Illustrator, "get_document_info"));
-        assert!(!tool_is_allowed(BridgeId::Illustrator, "create_document"));
-        assert!(!tool_is_allowed(BridgeId::Indesign, "populate_template"));
-        assert!(!tool_is_allowed(
-            BridgeId::Indesign,
-            "create_action_sequence"
-        ));
-    }
-
-    #[test]
-    fn tools_list_is_filtered_to_the_engine_allowlist() {
-        let mut message = json!({"jsonrpc":"2.0","id":1,"result":{"tools":[
-            {"name":"get_document_info"}, {"name":"create_document"}
-        ]}});
-        filter_tools_list(&mut message, BridgeId::Illustrator);
-        assert_eq!(
-            message["result"]["tools"],
-            json!([{ "name": "get_document_info" }])
-        );
+    fn upstream_tool_inventory_is_forwarded_without_filtering() {
+        let line = r#"{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"open_document"},{"name":"delete_object"},{"name":"execute_jsx"}]}}"#;
+        let mut output = Vec::new();
+        write_protocol_message(&mut output, line).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), format!("{line}\n"));
     }
 }

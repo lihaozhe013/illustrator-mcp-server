@@ -12,9 +12,9 @@ This repository contains two Adobe MCP upstreams and one independent Tauri manag
 ## Engineering rules
 
 - Prefer upstream implementations and small, reproducible patches. Do not move manager code into either upstream tree.
-- Preserve original application documents by default. Use working copies for managed edits and do not commit an output until verification passes.
-- Keep the Illustrator and InDesign engines independently installable, observable, upgradeable, recoverable, and removable.
-- Bind listeners to loopback, keep interprocess sockets private, redact document contents and credentials from logs, and keep arbitrary scripting disabled in default tool registrations.
+- Preserve the agent's choice of document workflow. Do not automatically copy documents, save baselines, or create document backups; preserve connected settings and user-owned files during runtime installation.
+- The Tauri app installs or replaces both bundled engines through one simple bridge setup flow. Keep the engines independently built and versioned, but do not add management controls or runtime history.
+- Bind listeners to loopback, keep interprocess sockets private, redact document contents and credentials from logs, and expose the complete upstream MCP tool surface plus trusted local JSX by default.
 - Back up and atomically update only the app-owned OpenCode or WorkBuddy config entries. JSONC comments and unrelated settings must be preserved.
 - Do not claim a real Adobe or agent-client connection from mock success. Record inaccessible Adobe permissions, Creative Cloud, client approval, signing, and notarization as explicit blockers.
 - Do not publish npm packages, upstream GitHub releases, client messages, or installer artifacts to public services unless the user explicitly requests publication.

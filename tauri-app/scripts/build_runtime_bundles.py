@@ -7,6 +7,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import select
 import shutil
 import subprocess
 import sys
@@ -91,17 +92,25 @@ def install_node_runtime() -> None:
 
 
 def build_illustrator_runtime() -> None:
+    from build_illustrator_sources import prepare_sources
+
     source = REPOSITORY_ROOT / "illustrator-mcp"
     version = PINS["illustrator"]["packageVersion"]
     package = json.loads((source / "package.json").read_text(encoding="utf-8"))
     if package.get("version") != version:
         raise SystemExit("The tracked Illustrator source version differs from the pinned snapshot.")
-    run(["npm", "run", "build"], cwd=source)
+    patched_source = prepare_sources()
+    upstream_dependencies = source / "node_modules"
+    if not upstream_dependencies.is_dir():
+        raise SystemExit("Install the pinned Illustrator development dependencies before bundling.")
+    os.symlink(upstream_dependencies, patched_source / "node_modules", target_is_directory=True)
+    run(["npm", "run", "build"], cwd=patched_source)
+    verify_illustrator_stdio(patched_source / "dist/bundle.cjs")
 
     destination = BUNDLES / "bridges" / "illustrator"
     remove_generated(destination)
     destination.mkdir(parents=True)
-    shutil.copytree(source / "dist", destination / "dist")
+    shutil.copytree(patched_source / "dist", destination / "dist")
     shutil.copy2(source / "LICENSE", destination / "LICENSE")
     shutil.copy2(RUNTIME / "locks/illustrator/package.json", destination / "package.json")
     shutil.copy2(RUNTIME / "locks/illustrator/package-lock.json", destination / "package-lock.json")
@@ -204,7 +213,7 @@ def build_indesign_runtime() -> None:
         "# UXP Permission Notice\n\n"
         "Creative Cloud will ask for user approval. This build limits network access to `http://127.0.0.1:3001`. "
         "The upstream bridge requires `localFileSystem: fullAccess` for its file-backed document and image operations. "
-        "The manager default MCP allowlist currently exposes read-only operations only. Review the Creative Cloud prompt before accepting it.\n",
+        "The bridge exposes the complete upstream MCP tool set and trusted JSX execution; scripts run with the application's local access. Review the Creative Cloud prompt before accepting it.\n",
         encoding="utf-8",
     )
     write_python_notices(destination)
@@ -284,8 +293,52 @@ def verify_frozen_indesign_stdio(executable: Path) -> None:
     if initialized is None or initialized.get("result", {}).get("serverInfo", {}).get("name") != "Adobe InDesign MCP Server":
         raise SystemExit("The frozen InDesign MCP did not complete initialize with the expected server identity.")
     tool_list = tools.get("result", {}).get("tools", []) if tools else []
-    if len(tool_list) < 90 or not any(tool.get("name") == "get_document_info" for tool in tool_list):
-        raise SystemExit("The frozen InDesign MCP did not return the expected upstream tools/list response.")
+    names = {tool.get("name") for tool in tool_list}
+    if len(names) != 100 or not {"get_document_info", "open_document", "execute_jsx"}.issubset(names):
+        raise SystemExit(f"The frozen InDesign MCP did not expose all 100 tools: got {len(names)}.")
+
+
+def verify_illustrator_stdio(bundle: Path) -> None:
+    requests = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "runtime-bundle-smoke", "version": "0.1.0"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+    ]
+    node = shutil.which("node")
+    if not node:
+        raise SystemExit("Node.js is required to verify the Illustrator MCP stdio bundle.")
+    process = subprocess.run(
+        [node, str(bundle)],
+        input="\n".join(json.dumps(request) for request in requests) + "\n",
+        capture_output=True,
+        check=False,
+        cwd=bundle.parent.parent,
+        text=True,
+        timeout=30,
+    )
+    if process.returncode != 0:
+        raise SystemExit(f"The Illustrator MCP failed its isolated stdio smoke test: {process.stderr[-2000:]}")
+    try:
+        responses = [json.loads(line) for line in process.stdout.splitlines()]
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"The Illustrator MCP wrote non-JSON data to stdout: {error}") from error
+    initialized = next((response for response in responses if response.get("id") == 1), None)
+    tools = next((response for response in responses if response.get("id") == 2), None)
+    if initialized is None or initialized.get("result", {}).get("serverInfo", {}).get("name") != "illustrator-mcp-server":
+        raise SystemExit("The Illustrator MCP did not complete initialize with the expected server identity.")
+    tool_list = tools.get("result", {}).get("tools", []) if tools else []
+    names = {tool.get("name") for tool in tool_list}
+    if len(names) != 67 or not {"get_document_info", "open_document", "execute_jsx"}.issubset(names):
+        raise SystemExit(f"The Illustrator MCP did not expose all 67 tools: got {len(names)}.")
 
 
 def write_hash_manifest(root: Path, filename: str, metadata: dict[str, str]) -> None:
@@ -319,7 +372,127 @@ def main() -> None:
         "sha256": sha256((tools_dir / "adobe-mcp-launcher").read_bytes()),
     }
     (tools_dir / "bridge-tools.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    verify_launcher_stdio(tools_dir / "adobe-mcp-launcher")
     print(f"Built both Adobe AI Bridge runtime bundles at {BUNDLES}")
+
+
+def verify_launcher_stdio(launcher: Path) -> None:
+    expected_counts = {"illustrator": 67, "indesign": 100}
+
+    def copy_file(source: str, destination: str) -> str:
+        try:
+            os.link(source, destination)
+            return destination
+        except OSError:
+            return shutil.copy2(source, destination)
+
+    with tempfile.TemporaryDirectory(prefix="adobe-ai-bridge-launcher-") as temporary:
+        home = Path(temporary)
+        support = home / "Library/Application Support/AdobeAIBridge"
+        node_source = BUNDLES / "shared/node"
+        node_root = support / "shared/node"
+        node_versions = node_root / "versions"
+        node_versions.mkdir(parents=True)
+        node_name = "launcher-smoke"
+        shutil.copytree(node_source, node_versions / node_name, copy_function=copy_file)
+        os.symlink(Path("versions") / node_name, node_root / "current")
+
+        state = support / "state"
+        state.mkdir(parents=True)
+        token = state / "indesign.token"
+        token.write_text("launcher-smoke-token-" + "x" * 40, encoding="utf-8")
+        os.chmod(token, 0o600)
+
+        for bridge, expected_count in expected_counts.items():
+            source = BUNDLES / "bridges" / bridge
+            runtime_root = support / "runtimes" / bridge
+            versions = runtime_root / "versions"
+            versions.mkdir(parents=True)
+            runtime_name = "launcher-smoke"
+            shutil.copytree(source, versions / runtime_name, copy_function=copy_file)
+            os.symlink(Path("versions") / runtime_name, runtime_root / "current")
+            environment = os.environ.copy()
+            environment.update({"HOME": str(home), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"})
+            process = subprocess.Popen(
+                [str(launcher), "--bridge", bridge],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=environment,
+                text=True,
+            )
+            assert process.stdin is not None and process.stdout is not None and process.stderr is not None
+            responses = []
+
+            def request(message: dict[str, object]) -> dict[str, object]:
+                process.stdin.write(json.dumps(message) + "\n")
+                process.stdin.flush()
+                ready, _, _ = select.select([process.stdout], [], [], 10)
+                if not ready:
+                    process.kill()
+                    raise SystemExit(f"The {bridge} launcher timed out waiting for MCP response {message.get('id')}.")
+                line = process.stdout.readline()
+                if not line:
+                    process.kill()
+                    raise SystemExit(f"The {bridge} launcher closed stdout before MCP response {message.get('id')}.")
+                try:
+                    response = json.loads(line)
+                except json.JSONDecodeError as error:
+                    process.kill()
+                    raise SystemExit(f"The {bridge} launcher wrote non-JSON stdout: {line!r}") from error
+                if response.get("jsonrpc") != "2.0" or response.get("id") != message.get("id"):
+                    process.kill()
+                    raise SystemExit(f"The {bridge} launcher returned an unexpected MCP response: {response!r}")
+                responses.append(response)
+                return response
+
+            initialized = request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-03-26",
+                        "capabilities": {},
+                        "clientInfo": {"name": "launcher-bundle-smoke", "version": "0.1.0"},
+                    },
+                }
+            )
+            process.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n')
+            process.stdin.flush()
+            tools = request({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+            hidden_call = request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "tools/call",
+                    "params": {"name": "open_document", "arguments": {}},
+                }
+            )
+            process.stdin.close()
+            try:
+                return_code = process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                raise SystemExit(f"The {bridge} launcher did not exit after its MCP client closed.")
+            stderr = process.stderr.read()
+            if return_code != 0:
+                raise SystemExit(f"The {bridge} MCP failed through the packaged launcher: {stderr[-2000:]}")
+            if any(response.get("jsonrpc") != "2.0" for response in responses):
+                raise SystemExit(f"The {bridge} launcher emitted a non-MCP stdout line.")
+            names = {
+                tool.get("name")
+                for tool in (tools or {}).get("result", {}).get("tools", [])
+            }
+            if len(names) != expected_count:
+                raise SystemExit(f"The {bridge} launcher exposed {len(names)} tools; expected {expected_count}.")
+            if not {"open_document", "execute_jsx"}.issubset(names):
+                raise SystemExit(f"The {bridge} launcher hid a required open or JSX tool.")
+            if hidden_call is None or hidden_call.get("error") is not None or not hidden_call.get("result", {}).get("isError"):
+                raise SystemExit(
+                    f"The {bridge} launcher did not forward the hidden open_document call: "
+                    f"{json.dumps(hidden_call, ensure_ascii=False)}; stderr={stderr[-1000:]}"
+                )
 
 
 def env_build_version() -> str:
