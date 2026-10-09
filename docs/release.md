@@ -6,6 +6,8 @@ The version 0.1.0 DMG was built on 2026-10-08 with SHA-256 `8c9ed1caaaec01cc9623
 
 Version 0.1.1 validation on 2026-10-08 passed `pnpm verify`: 16 Vitest tests, 4 Python tests, and 24 Rust tests (22 core and 2 launcher), plus the separate Illustrator upstream suite of 608 tests across 34 files. The runtime bundles rebuilt successfully. `pnpm build:dmg` produced `tauri-app/target/release/bundle/dmg/Adobe AI Bridge_0.1.1_aarch64.dmg`; `pnpm verify:dmg` validated 3,833 Illustrator resources, 2,787 InDesign resources, two shared Node runtime resources, license files, launcher, and arm64 binaries. The DMG is 93.08 MiB (97,598,874 bytes), unsigned, with SHA-256 `806179e305b42c7444f01c22999808f813dd830b04b2986d3502ba45b80613b1`. Clean-user installation, target-machine WorkBuddy handshake, signing, notarization, and real Adobe editing remain unverified.
 
+Version 0.1.2 validation on 2026-10-08 passed `pnpm verify`: 16 Vitest tests, 4 Python tests, and 27 Rust tests (25 core and 2 launcher), including coverage for a first WorkBuddy bridge in a missing or empty config, adding the second bridge, and rejecting unrelated setting changes. `pnpm build:dmg` produced `tauri-app/target/release/bundle/dmg/Adobe AI Bridge_0.1.2_aarch64.dmg`; `pnpm verify:dmg` validated 3,833 Illustrator resources, 2,787 InDesign resources, two shared Node runtime resources, license files, launcher, and arm64 binaries. The DMG is 93.08 MiB (97,605,566 bytes), unsigned, with SHA-256 `b46082393c7b8ee9a7b150b09994aaf598f002201d3568490df40af28a5cd405`. The fix has not yet been verified by a clean-user WorkBuddy handshake on the recipient Mac.
+
 Before a signed internal release:
 
 1. Run `pnpm install --frozen-lockfile` and `pnpm verify` from `tauri-app/`, plus the Illustrator upstream build/test from `illustrator-mcp/`.
@@ -18,6 +20,10 @@ Before a signed internal release:
 ## Version 0.1.1 first-install regression
 
 The 0.1.1 installer reports successful runtime installations separately from InDesign proxy readiness. A proxy timeout must not prevent selected client entries for successfully installed bridges from being written. Client selection is initialized from bounded, read-only detection; only detected clients are selected by default, and manual selection remains available. Unit and integration mocks cover a WorkBuddy-only installation, an OpenCode config failure that does not stop WorkBuddy, delayed proxy readiness, proxy timeout, and a partial runtime install. Run a clean WorkBuddy-only account on the recipient Mac before treating the real-client connection as verified.
+
+## Version 0.1.2 WorkBuddy config registration
+
+The client-config safety check now treats empty parent objects created as required scaffolding for the first selected MCP entry as part of that entry. It still compares and preserves all non-empty parent objects and unrelated settings. This fixes first-time registration when `~/.workbuddy/mcp.json` does not exist or contains an empty object. Rust tests verify both bridge entries can be added sequentially and unrelated setting edits remain rejected. Confirm the MCP entries appear in WorkBuddy after installing 0.1.2 and restarting the client on a clean user account.
 
 The DMG verifier selects the artifact matching the version in `tauri.conf.json`, so older versioned DMGs in the output directory do not prevent checking a new release.
 

@@ -138,11 +138,7 @@ pub fn apply_client_config(
             "Refresh the preview and apply the exact generated entry.",
         );
     }
-    let mut old_without_entry = old_value.clone();
-    let mut new_without_entry = new_value.clone();
-    remove_at_path(&mut old_without_entry, &path_in_config.path);
-    remove_at_path(&mut new_without_entry, &path_in_config.path);
-    if old_without_entry != new_without_entry {
+    if !configs_match_except_entry(&old_value, &new_value, &path_in_config.path) {
         return ActionResult::failure(
             "UNRELATED_CONFIG_CHANGE",
             "The proposed edit changes settings outside the selected Adobe AI Bridge entry.",
@@ -300,6 +296,31 @@ fn remove_at_path(value: &mut Value, path: &[String]) {
     }
 }
 
+fn configs_match_except_entry(old: &Value, new: &Value, path: &[String]) -> bool {
+    let mut old_without_entry = old.clone();
+    let mut new_without_entry = new.clone();
+    remove_entry_and_empty_parents(&mut old_without_entry, path);
+    remove_entry_and_empty_parents(&mut new_without_entry, path);
+    old_without_entry == new_without_entry
+}
+
+fn remove_entry_and_empty_parents(value: &mut Value, path: &[String]) {
+    remove_at_path(value, path);
+
+    // Creating a first entry also creates its parent objects. Ignore those empty containers
+    // during the unrelated-settings check, while retaining any parent with other settings.
+    for ancestor_length in (1..path.len()).rev() {
+        let ancestor = &path[..ancestor_length];
+        let is_empty_object = get_at_path(value, ancestor)
+            .and_then(Value::as_object)
+            .is_some_and(serde_json::Map::is_empty);
+        if !is_empty_object {
+            break;
+        }
+        remove_at_path(value, ancestor);
+    }
+}
+
 fn atomic_write_config(
     path: &Path,
     content: &[u8],
@@ -380,10 +401,47 @@ mod tests {
             parse_jsonc(r#"{"mcp":{"servers":{"other":{"command":["other"]}}}}"#).unwrap();
         let proposed = parse_jsonc(r#"{"mcp":{"servers":{"other":{"command":["other"]},"illustrator-ai-bridge":{"type":"local","command":["/root/Library/Application Support/AdobeAIBridge/bin/adobe-mcp-launcher","--bridge","illustrator"],"disabled":false}}}}"#).unwrap();
         let path = config_entry_path(ClientId::Opencode, BridgeId::Illustrator, &proposed);
-        let mut old_without = original;
-        let mut new_without = proposed;
-        remove_at_path(&mut old_without, &path.path);
-        remove_at_path(&mut new_without, &path.path);
-        assert_eq!(old_without, new_without);
+        assert!(configs_match_except_entry(&original, &proposed, &path.path));
+    }
+
+    #[test]
+    fn first_workbuddy_entry_may_create_required_parent_object() {
+        let original = parse_jsonc("{}").unwrap();
+        let proposed = parse_jsonc(
+            r#"{"mcpServers":{"illustrator-ai-bridge":{"command":"/bridge","args":["--bridge","illustrator"],"env":{}}}}"#,
+        )
+        .unwrap();
+        let path = config_entry_path(ClientId::Workbuddy, BridgeId::Illustrator, &proposed);
+
+        assert!(configs_match_except_entry(&original, &proposed, &path.path));
+    }
+
+    #[test]
+    fn second_workbuddy_entry_preserves_the_first_entry() {
+        let original = parse_jsonc(
+            r#"{"mcpServers":{"illustrator-ai-bridge":{"command":"/bridge","args":["--bridge","illustrator"],"env":{}}}}"#,
+        )
+        .unwrap();
+        let proposed = parse_jsonc(
+            r#"{"mcpServers":{"illustrator-ai-bridge":{"command":"/bridge","args":["--bridge","illustrator"],"env":{}},"indesign-ai-bridge":{"command":"/bridge","args":["--bridge","indesign"],"env":{}}}}"#,
+        )
+        .unwrap();
+        let path = config_entry_path(ClientId::Workbuddy, BridgeId::Indesign, &proposed);
+
+        assert!(configs_match_except_entry(&original, &proposed, &path.path));
+    }
+
+    #[test]
+    fn unrelated_workbuddy_settings_are_still_rejected() {
+        let original = parse_jsonc(r#"{"mcpServers":{"other":{"command":"/other"}}}"#).unwrap();
+        let proposed = parse_jsonc(
+            r#"{"mcpServers":{"other":{"command":"/changed"},"illustrator-ai-bridge":{"command":"/bridge","args":["--bridge","illustrator"],"env":{}}}}"#,
+        )
+        .unwrap();
+        let path = config_entry_path(ClientId::Workbuddy, BridgeId::Illustrator, &proposed);
+
+        assert!(!configs_match_except_entry(
+            &original, &proposed, &path.path
+        ));
     }
 }
